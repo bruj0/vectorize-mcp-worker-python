@@ -16,45 +16,135 @@ Production-Grade Hybrid RAG with Multimodal Support on Cloudflare Edge in Python
 
 ### Prerequisites
 
-- [uv](https://docs.astral.sh/uv/#installation)
 - A Cloudflare account with Workers, Vectorize, D1, and Workers AI enabled
+- [uv](https://docs.astral.sh/uv/#installation) (Python package manager)
+- [wrangler](https://developers.cloudflare.com/workers/wrangler/) (Cloudflare CLI) -- needed to create cloud resources
 
-### Install
+### Install uv
+
+**macOS:**
+
+```bash
+brew install uv
+```
+
+**Linux:**
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### Install Wrangler (Cloudflare CLI)
+
+Wrangler is needed to create and manage Cloudflare resources (D1 databases, Vectorize indexes, secrets). Install it globally via npm:
+
+**macOS:**
+
+```bash
+brew install node          # if you don't have Node.js
+npm install -g wrangler
+```
+
+**Linux (Debian/Ubuntu):**
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt-get install -y nodejs
+npm install -g wrangler
+```
+
+**Linux (any distro, via nvm):**
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+source ~/.bashrc   # or restart your shell
+nvm install --lts
+npm install -g wrangler
+```
+
+Then authenticate with your Cloudflare account:
+
+```bash
+wrangler login
+```
+
+This opens a browser window to authorize the CLI against your account.
+
+### Install Python Dependencies
 
 ```bash
 uv init
 uv tool install workers-py
 ```
 
-### Configure
+### Create Cloudflare Resources
 
-1. Copy `wrangler.toml` and fill in your D1 database ID
-2. Create the Vectorize index:
+The project requires three Cloudflare services: **Vectorize** (vector database), **D1** (SQL database), and **Workers AI** (inference). Workers AI is enabled automatically; the other two need to be created.
 
-```bash
-pywrangler vectorize create mcp-knowledge-base --dimensions=384 --metric=cosine
-```
+#### 1. Create the Vectorize Index
 
-3. Create the D1 database and run the schema:
+This creates the vector store used for semantic search with 384-dimension BGE embeddings:
 
 ```bash
-pywrangler d1 create mcp-knowledge-db
-pywrangler d1 execute mcp-knowledge-db --remote --file=./schema.sql
+wrangler vectorize create mcp-knowledge-base --dimensions=384 --metric=cosine
 ```
 
-4. Set your API key:
+#### 2. Create the D1 Database
+
+D1 stores document metadata, BM25 keyword indexes, and license records:
 
 ```bash
-pywrangler secret put API_KEY
+wrangler d1 create mcp-knowledge-db
 ```
+
+This outputs a database ID. Copy it and update `wrangler.toml`:
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "mcp-knowledge-db"
+database_id = "paste-your-database-id-here"
+```
+
+#### 3. Apply the Database Schema
+
+Run the schema migration against the remote D1 database:
+
+```bash
+wrangler d1 execute mcp-knowledge-db --remote --file=./schema.sql
+```
+
+This creates the following tables:
+
+| Table | Purpose |
+|-------|---------|
+| `documents` | Ingested document chunks and metadata |
+| `keywords` | BM25 term-frequency index per document |
+| `doc_stats` | Corpus-level statistics (total docs, avg length) |
+| `term_stats` | Document-frequency per term |
+| `licenses` | API license keys and quotas |
+
+#### 4. Set the API Key Secret
+
+Set the API key that protects write operations (`/ingest`, `/license/*`):
+
+```bash
+wrangler secret put API_KEY
+```
+
+You will be prompted to enter the secret value interactively. This is stored encrypted and never appears in `wrangler.toml`.
 
 ### Development
+
+Start a local dev server with hot reload:
 
 ```bash
 uv run pywrangler dev
 ```
 
 ### Deploy
+
+Build and deploy to Cloudflare's global edge network:
 
 ```bash
 uv run pywrangler deploy

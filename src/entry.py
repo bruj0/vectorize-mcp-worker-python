@@ -106,7 +106,7 @@ class Default(WorkerEntrypoint):
                         "vision": "@cf/meta/llama-4-scout-17b-16e-instruct",
                     },
                     "authentication": "required" if api_key else "disabled (dev mode)",
-                    "docs": "https://github.com/dannwaneri/vectorize-mcp-worker",
+                    "docs": "https://github.com/bruj0/vectorize-mcp-worker-python",
                 })
 
             # --- Dashboard ---

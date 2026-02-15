@@ -44,10 +44,7 @@ A semantic search API combining vector similarity with BM25 keyword matching, us
 curl -X POST /search -H "Content-Type: application/json" -d '{"query": "your question", "topK": 5}'
 ```
 
-## Author
-Daniel Nwaneri - https://github.com/dannwaneri
-
 ## Links
-- GitHub: https://github.com/dannwaneri/vectorize-mcp-worker
+- GitHub: https://github.com/bruj0/vectorize-mcp-worker-python
 - Dashboard: /dashboard
 """

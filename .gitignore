@@ -18,6 +18,7 @@ venv/
 .idea/
 
 # Wrangler
+wrangler.toml
 .wrangler/
 .dev.vars
 .dev.vars.*

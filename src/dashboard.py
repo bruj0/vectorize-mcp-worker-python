@@ -29,11 +29,11 @@ def get_dashboard_html() -> str:
   },
   "author": {
     "@type": "Person",
-    "name": "Daniel Nwaneri",
-    "url": "https://github.com/dannwaneri"
+    "name": "Rodrigo DL",
+    "url": "https://github.com/bruj0"
   },
   "softwareVersion": "2.1.0",
-  "url": "https://github.com/dannwaneri/vectorize-mcp-worker"
+  "url": "https://github.com/bruj0/vectorize-mcp-worker-python"
 }
 </script>
 <style>
@@ -117,7 +117,7 @@ h1{font-size:1.5rem}
 <body>
 <div class="container">
 <div class="gh-banner" id="ghBanner">
-<a href="https://github.com/dannwaneri/vectorize-mcp-worker" target="_blank">Star on GitHub - Help spread the word!</a>
+<a href="https://github.com/bruj0/vectorize-mcp-worker-python" target="_blank">Star on GitHub - Help spread the word!</a>
 <button onclick="document.getElementById('ghBanner').style.display='none'">X</button>
 </div>
 <h1>Vectorize MCP Worker V3</h1>
