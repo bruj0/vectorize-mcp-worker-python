@@ -1,0 +1,30 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Wrangler
+.wrangler/
+.dev.vars
+.dev.vars.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# uv
+uv.lock

@@ -1,0 +1,28 @@
+name = "vectorize-mcp-worker-python"
+main = "src/entry.py"
+compatibility_date = "2026-02-12"
+compatibility_flags = ["python_workers"]
+
+[ai]
+binding = "AI"
+
+# RAG Index (384 dimensions - BGE text embeddings)
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "mcp-knowledge-base"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mcp-knowledge-db"
+database_id = "YOUR_DATABASE_ID_HERE"  # Replace with your actual D1 database ID
+
+# Service binding to the multimodal worker (internal-only)
+[[services]]
+binding = "MULTIMODAL"
+service = "multimodal-pro-worker"
+
+[observability]
+enabled = true
+
+# Set your API key using: pywrangler secret put API_KEY
+# Never commit your actual API_KEY to git
