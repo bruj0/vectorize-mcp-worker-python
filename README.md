@@ -17,7 +17,6 @@ Production-Grade Hybrid RAG with Multimodal Support on Cloudflare Edge in Python
 ### Prerequisites
 
 - [uv](https://docs.astral.sh/uv/#installation)
-- [Node.js](https://nodejs.org/)
 - A Cloudflare account with Workers, Vectorize, D1, and Workers AI enabled
 
 ### Install

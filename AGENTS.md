@@ -2,11 +2,7 @@
 
 ## What Is This Repo
 
-A 1:1 Python port of [vectorize-mcp-worker](https://github.com/dannwaneri/vectorize-mcp-worker) (TypeScript). It is a **Cloudflare Python Worker** that provides hybrid RAG (Retrieval-Augmented Generation) with multimodal image support, deployed on Cloudflare's edge network using the Python Workers runtime (Pyodide).
-
-**Two sources, two concerns:**
-- The original TypeScript worker defines *what* the code does (features, algorithms, endpoints, infrastructure).
-- [cerebrov2](https://github.com/bruj0/cerebrov2) defines *how* the Python code is written (Pydantic models, Protocol abstractions, module organization, one-MCP-tool-with-operations pattern).
+It is a **Cloudflare Python Worker** that provides hybrid RAG (Retrieval-Augmented Generation) with multimodal image support, deployed on Cloudflare's edge network using the Python Workers runtime (Pyodide).
 
 ## Runtime & Deployment
 
