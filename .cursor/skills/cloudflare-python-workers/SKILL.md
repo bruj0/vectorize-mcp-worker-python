@@ -342,6 +342,7 @@ This is the fastest way to debug FFI issues since you can inspect actual types a
 | `D1_ERROR: Wrong number of parameter bindings` | `.bind()` called in a loop (replaces previous) | Use `.bind(*params)` to spread all at once |
 | `vectorCount: 0` but search works | Vectorize `describe()` is eventually consistent | Not a bug -- verify with search, not stats |
 | `'Request' object has no attribute 'formData'` | Python workers.Request doesn't wrap JS formData() | Use `parse_multipart(request)` from `src/multipart.py` |
+| `fetch() takes 1 positional argument but 2 were given` | Service binding `.fetch()` wrapped by workers lib | Create `JsRequest.new(url, init)` first, pass as single arg |
 
 ## Supported AI Models
 
@@ -406,3 +407,25 @@ Key points:
 - The target worker must be deployed first or `wrangler deploy` of the caller fails
 - Use `getattr(self.env, "BINDING_NAME", None)` for optional bindings to avoid crashes
 - Service bindings don't work with `--remote` in local dev; the target must be deployed
+
+### Critical: Service Binding `.fetch()` Signature
+
+The `workers` library wraps service binding `.fetch()` to accept **one** `Request` argument, NOT `(url, init)` like the standard Fetch API:
+
+```python
+# WRONG -- TypeError: fetch() takes 1 positional argument but 2 were given
+response = await self.env.MULTIMODAL.fetch(
+    "http://internal/endpoint",
+    to_js({"method": "POST", "headers": headers, "body": body}),
+)
+
+# CORRECT -- create a JS Request object first, pass as single argument
+from js import Request as JsRequest
+js_request = JsRequest.new(
+    "http://internal/endpoint",
+    to_js({"method": "POST", "headers": headers, "body": body}),
+)
+response = await self.env.MULTIMODAL.fetch(js_request)
+```
+
+The error message is `fetch() takes 1 positional argument but 2 were given` and comes from `workers/_workers.py`.

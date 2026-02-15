@@ -58,16 +58,22 @@ class CloudflareMultimodalProcessor:
         if self._internal_secret:
             headers["X-Internal-Secret"] = self._internal_secret
 
-        self._log.debug_log("multimodal.fetch", payloadSize=len(json.dumps(payload)))
+        body_str = json.dumps(payload)
+        self._log.debug_log("multimodal.fetch", payloadSize=len(body_str))
 
-        response = await self._binding.fetch(
+        # The workers library wraps service-binding .fetch() to accept a
+        # single Request object -- NOT (url, init) like the standard Fetch API.
+        from js import Request as JsRequest  # type: ignore[import-untyped]
+
+        js_request = JsRequest.new(
             "http://internal/describe-image",
             to_js({
                 "method": "POST",
                 "headers": headers,
-                "body": json.dumps(payload),
+                "body": body_str,
             }),
         )
+        response = await self._binding.fetch(js_request)
 
         result_text = await response.text()
         self._log.debug_log("multimodal.response", status=response.status, bodyLength=len(result_text))
