@@ -12,9 +12,10 @@ This document covers deploying and operating the Vectorize MCP Worker (Python) i
 6. [Post-Deployment Verification](#post-deployment-verification)
 7. [Security](#security)
 8. [Monitoring & Observability](#monitoring--observability)
-9. [Operations](#operations)
-10. [Scaling & Limits](#scaling--limits)
-11. [Troubleshooting](#troubleshooting)
+9. [API Reference](#api-reference)
+10. [Operations](#operations)
+11. [Scaling & Limits](#scaling--limits)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -144,7 +145,7 @@ The worker depends on four Cloudflare services:
 |---------|-------------|---------|
 | **Workers AI** | `AI` | Embedding (`bge-small-en-v1.5`), reranking (`bge-reranker-base`), vision (`llama-4-scout`) |
 | **Vectorize** | `VECTORIZE` | 384-dimension cosine vector index for semantic search |
-| **D1** | `DB` | SQLite database for documents, BM25 keywords, licenses |
+| **D1** | `DB` | SQLite database for documents, BM25 keywords, licenses, settings |
 | **Service Binding** | `MULTIMODAL` | Internal binding to a multimodal image processing worker |
 
 ### 1. Create the Vectorize Index
@@ -169,7 +170,7 @@ Copy the `database_id` from the output.
 wrangler d1 execute mcp-knowledge-db --remote --file=./schema.sql
 ```
 
-This creates five tables: `documents`, `keywords`, `doc_stats`, `term_stats`, and `licenses`. See `schema.sql` for the full DDL.
+This creates six tables: `documents`, `keywords`, `doc_stats`, `term_stats`, `licenses`, and `settings`. See `schema.sql` for the full DDL.
 
 ## Configuration
 
@@ -192,22 +193,31 @@ database_id = "your-actual-database-id"
 
 ### Secrets
 
-Set the API key that protects write operations:
+The worker uses three secrets/variables. Set them via `wrangler secret put`:
+
+| Secret | Required | Purpose |
+|--------|:--------:|---------|
+| `API_KEY` | **Yes** | Bearer token for all authenticated endpoints |
+| `INTERNAL_SECRET` | No | Shared secret between main worker and multimodal worker (sent as `X-Internal-Secret` header on service-binding calls) |
+| `DEBUG_LOGGING` | No | Set to `"true"` to enable verbose debug logs (visible via `wrangler tail`) |
 
 ```bash
 wrangler secret put API_KEY
+wrangler secret put INTERNAL_SECRET   # only if using multimodal worker
 ```
 
-Enter a strong, random value when prompted. This secret is:
+Enter a strong, random value when prompted. These secrets are:
 - Stored encrypted in Cloudflare's infrastructure
 - Never exposed in `wrangler.toml` or logs
-- Required as a `Bearer` token for all non-public endpoints
+- `API_KEY` is required as a `Bearer` token for all non-public endpoints
 
 Generate a strong key:
 
 ```bash
 openssl rand -hex 32
 ```
+
+> **Tip:** `DEBUG_LOGGING` can also be set as a plain-text variable in `wrangler.toml` under `[vars]` instead of as a secret, since it contains no sensitive data.
 
 ### Environment-Specific Overrides
 
@@ -348,6 +358,15 @@ curl -X POST https://your-worker-url/search/multimodal \
   -d '{"query": "test", "topK": 1}'
 ```
 
+Or documents only:
+
+```bash
+curl -X POST https://your-worker-url/search/documents \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"query": "test", "topK": 1}'
+```
+
 ### 5. Dashboard
 
 Open `https://your-worker-url/dashboard` in a browser. The interactive playground should load.
@@ -356,13 +375,38 @@ Open `https://your-worker-url/dashboard` in a browser. The interactive playgroun
 
 ### Authentication Model
 
-| Route | Auth Required | Description |
-|-------|:------------:|-------------|
-| `GET /` | No | API documentation (read-only) |
-| `GET /health/check` | No | Health check |
-| `GET /dashboard` | No | Interactive UI |
-| `GET /llms.txt` | No | AI search engine info |
-| All other routes | **Yes** | Bearer token required |
+**Public routes** (no authentication):
+
+| Route | Description |
+|-------|-------------|
+| `GET /` | API documentation (read-only) |
+| `GET /health/check` | Health check and binding status |
+| `GET /dashboard` | Interactive playground UI |
+| `GET /llms.txt` | AI search engine info |
+
+**Authenticated routes** (Bearer token required):
+
+| Route | Description |
+|-------|-------------|
+| `POST /search/multimodal` | Hybrid search -- docs + images |
+| `POST /search/documents` | Hybrid search -- documents only |
+| `POST /search/similar-images` | Visual similarity search (image input) |
+| `POST /ingest/document` | Ingest document with auto-chunking |
+| `POST /ingest/image` | Ingest image with AI description + OCR |
+| `GET /stats/index` | Index statistics |
+| `GET /get/document/:id` | Get full text document by ID |
+| `GET /get/image/:id` | Get full image document by ID |
+| `GET /list/documents` | List documents with pagination |
+| `DELETE /delete/document/:id` | Delete document by ID |
+| `POST /init/reset-passphrase` | Set/rotate the reset passphrase |
+| `POST /reset/all` | Wipe all databases (requires passphrase) |
+| `POST /reset/documents` | Wipe documents + vectors (requires passphrase) |
+| `POST /reset/licenses` | Wipe licenses only (requires passphrase) |
+| `POST /license/validate` | Validate a license key |
+| `POST /license/create` | Create a license (admin) |
+| `GET /license/list` | List all licenses (admin) |
+| `POST /license/revoke` | Revoke a license (admin) |
+| `DELETE /delete/license/:key` | Delete a license by key |
 
 ### Production Security Checklist
 
@@ -420,7 +464,7 @@ The worker has `[observability] enabled = true` in `wrangler.toml`. This enables
 
 ### Performance Telemetry
 
-Every `/search/multimodal` response includes a `performance` object:
+Every `/search/multimodal` and `/search/documents` response includes a `performance` object:
 
 ```json
 {
@@ -434,15 +478,128 @@ Every `/search/multimodal` response includes a `performance` object:
 }
 ```
 
-Use this to identify bottlenecks. The reranker is typically the slowest step; disable it (`"rerank": false`) if latency is critical and precision can be traded off.
+Each search result also includes a `scores` breakdown:
+
+```json
+{
+  "scores": {
+    "vector": 0.85,
+    "keyword": 0.72,
+    "reranker": 0.91
+  }
+}
+```
+
+Use these to identify bottlenecks. The reranker is typically the slowest step; disable it (`"rerank": false`) if latency is critical and precision can be traded off.
 
 ### Search Cache
 
 The `HybridSearchEngine` maintains an in-memory cache with a 60-second TTL. Identical queries within the TTL window return `"totalTime": "0ms (cached)"`. Note that each Worker isolate has its own cache -- this is per-isolate, not global.
 
-## Operations
+## API Reference
 
-### Ingesting Documents
+All authenticated endpoints require the `Authorization: Bearer YOUR_API_KEY` header. The `AUTH` column below indicates whether the endpoint is public or requires authentication.
+
+### Search
+
+#### `POST /search/multimodal`
+
+Hybrid semantic + keyword search returning both documents and images. Combines vector similarity (BGE Small) with BM25 keyword matching using Reciprocal Rank Fusion (RRF). Optionally reranked by a cross-encoder model.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | *required* | Search query text |
+| `topK` | integer | 5 | Number of results to return (1--20) |
+| `rerank` | boolean | true | Use cross-encoder reranking |
+| `offset` | integer | 0 | Pagination offset (skip first N results) |
+| `snippetLength` | integer | 200 | Maximum snippet length in characters (50--500) |
+
+```bash
+curl -X POST https://your-worker-url/search/multimodal \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"query": "kubernetes deployment", "topK": 5, "rerank": true}'
+```
+
+Response:
+
+```json
+{
+  "query": "kubernetes deployment",
+  "topK": 5,
+  "offset": 0,
+  "resultsCount": 12,
+  "results": [
+    {
+      "id": "doc-001-chunk-0",
+      "score": 0.0476,
+      "snippet": "Kubernetes deployments manage ...",
+      "category": "docs",
+      "isImage": false,
+      "title": "Getting Started with K8s",
+      "source": null,
+      "wordCount": 342,
+      "chunkIndex": 0,
+      "parentId": "doc-001",
+      "createdAt": "2026-01-15 10:30:00",
+      "scores": {
+        "vector": 0.85,
+        "keyword": 0.72,
+        "reranker": 0.91
+      }
+    }
+  ],
+  "performance": {
+    "embeddingTime": "45ms",
+    "vectorSearchTime": "12ms",
+    "keywordSearchTime": "8ms",
+    "rerankerTime": "120ms",
+    "totalTime": "195ms"
+  }
+}
+```
+
+#### `POST /search/documents`
+
+Same as `/search/multimodal` but filters out image results, returning only text documents. Accepts the same parameters.
+
+```bash
+curl -X POST https://your-worker-url/search/documents \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"query": "payment processing", "topK": 10}'
+```
+
+#### `POST /search/similar-images`
+
+Visual similarity search: upload an image and find similar images already ingested. The image is described by Llama 4 Scout, then the description is used as a search query. Requires the `MULTIMODAL` service binding.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `image` | file | *required* | Image file (multipart form) |
+| `topK` | string | "5" | Number of results (1--20, sent as form field) |
+
+```bash
+curl -X POST https://your-worker-url/search/similar-images \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -F "image=@query-photo.jpg" \
+  -F "topK=5"
+```
+
+Returns HTTP 501 if the `MULTIMODAL` binding is not configured.
+
+### Ingestion
+
+#### `POST /ingest/document`
+
+Ingest a text document with automatic recursive chunking (15% overlap). Each chunk is embedded and stored in both Vectorize (vector index) and D1 (BM25 keyword index).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `id` | string | *required* | Unique document ID |
+| `content` | string | *required* | Full text content |
+| `category` | string | `null` | Category tag for filtering |
+| `title` | string | `null` | Document title (stored as metadata) |
 
 ```bash
 curl -X POST https://your-worker-url/ingest/document \
@@ -456,9 +613,28 @@ curl -X POST https://your-worker-url/ingest/document \
   }'
 ```
 
-Documents are automatically chunked (recursive splitting with 15% overlap) and indexed in both Vectorize (vector embeddings) and D1 (BM25 term frequencies).
+Response:
 
-### Ingesting Images
+```json
+{
+  "success": true,
+  "documentId": "doc-001",
+  "chunksCreated": 3,
+  "performance": { "embeddingTime": "120ms", "totalTime": "250ms" }
+}
+```
+
+#### `POST /ingest/image`
+
+Ingest an image with AI-generated description and OCR. Requires the `MULTIMODAL` service binding (multimodal-pro-worker deployed).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `id` | string | *required* | Unique image ID |
+| `image` | file | *required* | Image file (multipart form) |
+| `category` | string | `"images"` | Category tag |
+| `title` | string | `null` | Image title |
+| `imageType` | string | `"auto"` | Hint for vision model: `screenshot`, `diagram`, `document`, `chart`, `photo`, `auto` |
 
 ```bash
 curl -X POST https://your-worker-url/ingest/image \
@@ -470,8 +646,6 @@ curl -X POST https://your-worker-url/ingest/image \
   -F "imageType=photo"
 ```
 
-Requires the `multimodal-pro-worker` to be deployed and the `MULTIMODAL` service binding configured.
-
 The image processing pipeline:
 1. Main worker sends image bytes to `multimodal-pro-worker` via Service Binding
 2. Multimodal worker runs Llama 4 Scout for description (prompt varies by `imageType`)
@@ -479,16 +653,253 @@ The image processing pipeline:
 4. Multimodal worker generates BGE embedding (384d) from combined text
 5. Main worker stores description + OCR in D1 and vector in Vectorize
 
-Supported `imageType` values: `screenshot`, `diagram`, `document`, `chart`, `photo`, `auto` (default).
+Returns HTTP 501 if the `MULTIMODAL` binding is not configured.
 
-### Deleting Documents
+### Retrieval
+
+#### `GET /get/document/:id`
+
+Retrieve the full text document by ID, including all metadata columns. Returns 400 if the ID refers to an image document (use `/get/image/:id` instead).
+
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" \
+  https://your-worker-url/get/document/doc-001
+```
+
+Response:
+
+```json
+{
+  "id": "doc-001",
+  "content": "Full document text...",
+  "title": "Getting Started",
+  "source": null,
+  "category": "docs",
+  "chunk_index": 0,
+  "parent_id": null,
+  "word_count": 342,
+  "is_image": false,
+  "created_at": "2026-01-15 10:30:00"
+}
+```
+
+#### `GET /get/image/:id`
+
+Retrieve the full image document by ID, including AI description and OCR text stored in `content`. Returns 400 if the ID refers to a text document (use `/get/document/:id` instead).
+
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" \
+  https://your-worker-url/get/image/img-001
+```
+
+#### `GET /list/documents`
+
+List documents with pagination. Returns metadata only (no full content).
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | integer (query) | 50 | Results per page (1--200) |
+| `offset` | integer (query) | 0 | Pagination offset |
+
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" \
+  "https://your-worker-url/list/documents?limit=20&offset=0"
+```
+
+Response:
+
+```json
+{
+  "documents": [
+    {
+      "id": "doc-001",
+      "title": "Getting Started",
+      "source": null,
+      "category": "docs",
+      "chunk_index": 0,
+      "parent_id": null,
+      "word_count": 342,
+      "is_image": false,
+      "created_at": "2026-01-15 10:30:00"
+    }
+  ],
+  "limit": 20,
+  "offset": 0
+}
+```
+
+### Deletion
+
+#### `DELETE /delete/document/:id`
+
+Delete a document and all its chunks from both Vectorize and D1.
 
 ```bash
 curl -X DELETE https://your-worker-url/delete/document/doc-001 \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
-This removes the document from both Vectorize and D1.
+#### `DELETE /delete/license/:key`
+
+Permanently delete a license row from the database.
+
+```bash
+curl -X DELETE https://your-worker-url/delete/license/lic_abc123 \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+### License Management
+
+#### `POST /license/create`
+
+Create a new license key. Default limits vary by plan tier.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `email` | string | *required* | Email to associate with the license |
+| `plan` | string | `"standard"` | Plan tier: `standard`, `pro`, `enterprise` |
+| `max_documents` | integer | plan-based | Override max documents (standard: 10k, pro: 50k, enterprise: 100k) |
+| `max_queries_per_day` | integer | plan-based | Override max queries/day (standard: 1k, pro: 5k, enterprise: 10k) |
+
+```bash
+curl -X POST https://your-worker-url/license/create \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"email": "team@example.com", "plan": "pro"}'
+```
+
+#### `POST /license/validate`
+
+Validate a license key and return its plan and limits.
+
+```bash
+curl -X POST https://your-worker-url/license/validate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"license_key": "lic_abc123..."}'
+```
+
+#### `GET /license/list`
+
+List all licenses with their keys, emails, plans, and limits.
+
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" \
+  https://your-worker-url/license/list
+```
+
+#### `POST /license/revoke`
+
+Revoke (deactivate) a license key. The key remains in the database but becomes invalid for validation.
+
+```bash
+curl -X POST https://your-worker-url/license/revoke \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"license_key": "lic_abc123..."}'
+```
+
+### Reset Operations
+
+All reset endpoints require a passphrase that must be configured first via `POST /init/reset-passphrase`. This prevents accidental data loss.
+
+#### `POST /init/reset-passphrase`
+
+Set or rotate the reset passphrase. The passphrase is SHA-256 hashed and stored in the D1 `settings` table. Minimum 8 characters.
+
+```bash
+curl -X POST https://your-worker-url/init/reset-passphrase \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"passphrase": "my-strong-reset-phrase"}'
+```
+
+#### `POST /reset/all`
+
+Wipe **all** data: documents, vectors, keywords, term stats, and licenses. Requires passphrase.
+
+```bash
+curl -X POST https://your-worker-url/reset/all \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"passphrase": "my-strong-reset-phrase"}'
+```
+
+Response: `{ "success": true, "deleted": { "documents": 42, "licenses": 3 } }`
+
+#### `POST /reset/documents`
+
+Wipe documents and vectors only (licenses are preserved). Requires passphrase.
+
+```bash
+curl -X POST https://your-worker-url/reset/documents \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"passphrase": "my-strong-reset-phrase"}'
+```
+
+#### `POST /reset/licenses`
+
+Wipe licenses only (documents are preserved). Requires passphrase.
+
+```bash
+curl -X POST https://your-worker-url/reset/licenses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"passphrase": "my-strong-reset-phrase"}'
+```
+
+## Operations
+
+### Resetting the Database (Passphrase Guard)
+
+The worker provides three destructive reset endpoints that wipe data from D1 and Vectorize. To prevent accidental data loss, every reset call requires a **passphrase** that you configure ahead of time.
+
+#### How it works
+
+1. You call `POST /init/reset-passphrase` with a passphrase of your choice (minimum 8 characters).
+2. The worker SHA-256 hashes the passphrase and stores the hash in the D1 `settings` table (key: `reset_passphrase_hash`). The plaintext passphrase is **never** stored.
+3. Any subsequent call to `/reset/all`, `/reset/documents`, or `/reset/licenses` must include the matching passphrase in the request body. The worker hashes the provided value and compares it against the stored hash.
+4. If no passphrase has been configured yet, the reset endpoints return **403** with a hint to call `/init/reset-passphrase` first.
+
+#### Step-by-step: full database wipe
+
+```bash
+# 1. Configure the reset passphrase (only needed once, or when rotating)
+curl -X POST https://your-worker-url/init/reset-passphrase \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"passphrase": "my-strong-reset-phrase"}'
+# → {"success": true, "message": "Reset passphrase configured"}
+
+# 2. Wipe everything (documents + vectors + licenses)
+curl -X POST https://your-worker-url/reset/all \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"passphrase": "my-strong-reset-phrase"}'
+# → {"success": true, "deleted": {"documents": 42, "licenses": 3}}
+```
+
+#### Selective resets
+
+| Endpoint | What it deletes | What it preserves |
+|----------|----------------|-------------------|
+| `POST /reset/all` | Documents, vectors, keywords, term stats, **and** licenses | Settings (including the passphrase hash) |
+| `POST /reset/documents` | Documents, vectors, keywords, term stats | Licenses, settings |
+| `POST /reset/licenses` | Licenses | Documents, vectors, settings |
+
+#### Rotating the passphrase
+
+Call `POST /init/reset-passphrase` again with a new value. The stored hash is overwritten immediately via `INSERT ... ON CONFLICT DO UPDATE`, so the old passphrase stops working right away.
+
+```bash
+curl -X POST https://your-worker-url/init/reset-passphrase \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{"passphrase": "new-even-stronger-phrase"}'
+```
+
+> **Important:** The passphrase is an additional safety layer on top of the `API_KEY` -- both are required. Even if someone has the API key, they cannot wipe the database without knowing the passphrase.
 
 ### Database Migrations
 
