@@ -1,6 +1,20 @@
 # Quickstart
 
-End-to-end guide: clone the repo, provision Cloudflare resources, start the worker, and test every endpoint.
+End-to-end guide: clone the repo, provision Cloudflare resources, deploy the worker, and test every endpoint.
+
+## Table of Contents
+
+1. [Clone and Install](#1-clone-and-install)
+2. [Provision Cloudflare Resources](#2-provision-cloudflare-resources)
+3. [Deploy and Verify](#3-deploy-and-verify)
+4. [Test Public Endpoints](#4-test-public-endpoints)
+5. [Test Authenticated Endpoints](#5-test-authenticated-endpoints)
+6. [Test License Endpoints](#6-test-license-endpoints)
+7. [Test MCP Endpoint](#7-test-mcp-endpoint)
+8. [Debugging & Redeployment](#8-debugging--redeployment)
+9. [Quick Reference](#quick-reference)
+
+---
 
 ## 1. Clone and Install
 
@@ -94,7 +108,9 @@ database_id = "paste-your-database-id-here"
 wrangler d1 execute mcp-knowledge-db --remote --file=./schema.sql
 ```
 
-### Set the API key secret
+### Set secrets
+
+Set the API key that protects authenticated endpoints on the main worker:
 
 ```bash
 wrangler secret put API_KEY
@@ -102,36 +118,70 @@ wrangler secret put API_KEY
 
 Enter any strong string when prompted (e.g. `my-secret-key-123`). Remember this value -- you'll pass it as a Bearer token in authenticated requests.
 
-> **Dev mode shortcut:** If you skip this step, the worker runs in development mode where *all* endpoints are open without authentication. Useful for local testing but never use this in production.
-
-## 3. Start the Dev Server
+Set the shared secret used for internal communication between the main worker and the multimodal worker. Use the same value for both:
 
 ```bash
-uv run pywrangler dev
+# Main worker (from project root)
+wrangler secret put INTERNAL_SECRET
+
+# Multimodal worker
+cd multimodal-pro-worker
+wrangler secret put INTERNAL_SECRET
+cd ..
 ```
 
-The worker starts at `http://localhost:8787` (default). All `curl` examples below use this base URL. Replace it with your `*.workers.dev` URL after deploying.
+## 3. Deploy and Verify
 
-Set a shell variable for convenience:
+Python Workers are best tested against the deployed Cloudflare environment (local dev has limited binding support).
+
+### Deploy the multimodal worker
+
+The multimodal worker must be deployed **before** the main worker because the main worker references it via a Service Binding. Cloudflare validates this at deploy time.
 
 ```bash
-BASE=http://localhost:8787
-API_KEY="my-secret-key-123"  # the value you set in step 2 (omit if dev mode)
+cd multimodal-pro-worker
+uv run pywrangler deploy
+cd ..
 ```
 
-## 4. Test Public Endpoints
+The CLI prints the multimodal worker URL, e.g. `https://multimodal-pro-worker.<your-subdomain>.workers.dev`. You don't need this URL -- the main worker calls it internally via Service Binding.
 
-These endpoints do not require authentication.
-
-### GET / -- API documentation
+Verify the multimodal worker rejects unauthenticated requests:
 
 ```bash
-curl -s "$BASE/" | python3 -m json.tool
+curl -s -X POST "https://multimodal-pro-worker.<your-subdomain>.workers.dev/describe-image" \
+  -H "Content-Type: application/json" \
+  -d '{}' | python3 -m json.tool
 ```
 
-Expected: JSON object with `name`, `version`, `endpoints`, `models`, and `authentication` fields.
+Expected:
 
-### GET /test -- Health check
+```json
+{
+  "error": "Unauthorized. This worker is internal-only."
+}
+```
+
+The response status should be `403`. If you get a different response, the `INTERNAL_SECRET` was not set correctly in step 2.
+
+### Deploy the main worker
+
+```bash
+uv run pywrangler deploy
+```
+
+The CLI prints the main worker URL, e.g. `https://vectorize-mcp-worker-python.<your-subdomain>.workers.dev`. This is the URL you'll use for all API calls.
+
+### Set shell variables
+
+You'll use these throughout the rest of the quickstart:
+
+```bash
+BASE="https://vectorize-mcp-worker-python.<your-subdomain>.workers.dev"
+API_KEY="my-secret-key-123"  # the value you set in step 2
+```
+
+### Verify the deployment
 
 ```bash
 curl -s "$BASE/test" | python3 -m json.tool
@@ -152,7 +202,46 @@ Expected:
 }
 ```
 
-If `hasAPIKey` is `false` and `mode` is `"development"`, the API_KEY secret was not set (dev mode).
+**Critical**: `mode` must be `"production"`. If it shows `"development"`, the `API_KEY` secret was not set and all endpoints are unprotected.
+
+### Verify authentication is enforced
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE/search" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test"}'
+```
+
+Expected: `401`. To see the full error:
+
+```bash
+curl -s -X POST "$BASE/search" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "test"}' | python3 -m json.tool
+```
+
+Expected:
+
+```json
+{
+  "error": "Missing Authorization header",
+  "hint": "Include 'Authorization: Bearer YOUR_API_KEY' in your request"
+}
+```
+
+If the request succeeds without a Bearer token, authentication is not working -- re-run `wrangler secret put API_KEY` and redeploy.
+
+## 4. Test Public Endpoints
+
+These endpoints do not require authentication.
+
+### GET / -- API documentation
+
+```bash
+curl -s "$BASE/" | python3 -m json.tool
+```
+
+Expected: JSON object with `name`, `version`, `endpoints`, `models`, and `authentication` fields.
 
 ### GET /dashboard -- Interactive playground
 
@@ -160,7 +249,7 @@ If `hasAPIKey` is `false` and `mode` is `"development"`, the API_KEY secret was 
 curl -s -o /dev/null -w "%{http_code}" "$BASE/dashboard"
 ```
 
-Expected: `200`. Open `http://localhost:8787/dashboard` in a browser to see the full UI.
+Expected: `200`. Open `$BASE/dashboard` in a browser to see the full UI.
 
 ### GET /llms.txt -- AI search engine info
 
@@ -261,40 +350,105 @@ curl -s -X POST "$BASE/search" \
   }' | python3 -m json.tool
 ```
 
-### POST /ingest-image -- Ingest an image (multipart form)
+### POST /ingest-image -- Ingest a photo
 
-Requires a test image. Download one first:
+Download a real photograph to test visual description:
 
 ```bash
-curl -s -o test-image.png "https://via.placeholder.com/300x200.png?text=Test+Image"
+curl -sL -o test-photo.jpg "https://picsum.photos/seed/quickstart/400/300.jpg"
 ```
 
-Then ingest it:
+> This is a seeded URL that always returns the same photograph. It typically shows
+> a landscape or architectural shot -- exactly the kind of image Llama 4 Scout
+> excels at describing.
+
+Ingest it with `imageType=photo`:
 
 ```bash
 curl -s -X POST "$BASE/ingest-image" \
   -H "Authorization: Bearer $API_KEY" \
-  -F "id=img-test-001" \
-  -F "image=@test-image.png" \
+  -F "id=img-photo-001" \
+  -F "image=@test-photo.jpg" \
   -F "category=test-images" \
-  -F "title=Test Placeholder Image" \
-  -F "imageType=auto" | python3 -m json.tool
+  -F "title=Sample Photo" \
+  -F "imageType=photo" | python3 -m json.tool
 ```
 
-Expected: `success: true` with `description` (AI-generated) and `extractedText` fields.
+Expected: `success: true` with a `description` generated by Llama 4 Scout describing what is visible in the photograph (e.g. scenery, objects, colors). The `extractedText` field will be `null` or empty since the photo has no readable text.
 
-> **Note:** This endpoint calls Workers AI (Llama 4 Scout) via the MULTIMODAL service binding. It may fail in local dev if the service binding is not available.
+### POST /ingest-image -- Ingest a document with OCR
+
+Download an image that contains text-heavy content to test OCR extraction:
+
+```bash
+curl -sL -o test-document.jpg "https://www.w3.org/WAI/WCAG21/Techniques/pdf/img/table-word.jpg"
+```
+
+> This is a W3C accessibility example showing a table created in Microsoft Word.
+> It contains clear, readable text in rows and columns -- ideal for verifying
+> that OCR extraction works correctly.
+
+Ingest it with `imageType=document`:
+
+```bash
+curl -s -X POST "$BASE/ingest-image" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "id=img-doc-001" \
+  -F "image=@test-document.jpg" \
+  -F "category=test-documents" \
+  -F "title=W3C Table Screenshot" \
+  -F "imageType=document" | python3 -m json.tool
+```
+
+Expected:
+- `success: true`
+- `description`: explains what the image shows (a table in a Word document)
+- `extractedText`: **non-null** OCR output containing the text from the table cells
+
+Verify OCR worked by checking that `extractedText` contains words visible in the
+table (e.g. column headers or cell values). If `extractedText` is `null`, the
+multimodal worker may not be running -- check with `wrangler tail`.
+
+Supported image types: `screenshot`, `diagram`, `document`, `chart`, `photo`, `auto` (default). The `document` type uses a prompt optimized for text-heavy images and OCR, while `photo` focuses on visual description.
 
 ### POST /find-similar-images -- Visual similarity search
+
+Search using the photo you ingested:
 
 ```bash
 curl -s -X POST "$BASE/find-similar-images" \
   -H "Authorization: Bearer $API_KEY" \
-  -F "image=@test-image.png" \
+  -F "image=@test-photo.jpg" \
   -F "topK=3" | python3 -m json.tool
 ```
 
-Expected: results array filtered to image-type documents, ranked by similarity.
+Expected: results array containing `img-photo-001` ranked highest (exact match), followed by `img-doc-001` if both were ingested.
+
+Search using the document image to verify OCR-ingested content is findable:
+
+```bash
+curl -s -X POST "$BASE/find-similar-images" \
+  -H "Authorization: Bearer $API_KEY" \
+  -F "image=@test-document.jpg" \
+  -F "topK=3" | python3 -m json.tool
+```
+
+Expected: `img-doc-001` should rank highest since it's the same image.
+
+You can also search for the OCR content via text search:
+
+```bash
+curl -s -X POST "$BASE/search" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "table word document",
+    "topK": 3,
+    "rerank": true
+  }' | python3 -m json.tool
+```
+
+Expected: `img-doc-001` should appear in results since its extracted text was indexed alongside the AI description.
 
 ### DELETE /documents/:id -- Delete a document
 
@@ -445,22 +599,44 @@ curl -s -X POST "$BASE/mcp/call" \
   }' | python3 -m json.tool
 ```
 
-## 8. Deploy to Production
+## 8. Debugging & Redeployment
 
-When everything works locally:
+### Live logs with wrangler tail
+
+Stream real-time logs (Python tracebacks, request metadata, console output) from the deployed worker:
 
 ```bash
+wrangler tail --format=json
+```
+
+Keep this running in a second terminal while you test. Useful filters:
+
+```bash
+wrangler tail --format=json --status error    # only show errors
+wrangler tail --format=json --method POST     # only POST requests
+wrangler tail --format=json --search "search" # filter by path/content
+```
+
+### Redeploying after code changes
+
+Always deploy the multimodal worker first, then the main worker:
+
+```bash
+cd multimodal-pro-worker && uv run pywrangler deploy && cd ..
 uv run pywrangler deploy
 ```
 
-The CLI prints the live URL (e.g. `https://vectorize-mcp-worker-python.<your-subdomain>.workers.dev`). Replace `$BASE` with that URL and re-run any of the tests above to verify the production deployment.
+### Other debugging tools
+
+- **Cloudflare Dashboard:** Workers & Pages > your worker > Logs tab for historical request logs
+- **curl directly:** All the `curl` commands in this guide work against the deployed URL at any time
 
 ## Quick Reference
 
 | Endpoint | Method | Auth | Body | Section |
 |----------|--------|------|------|---------|
 | `/` | GET | No | -- | [4](#4-test-public-endpoints) |
-| `/test` | GET | No | -- | [4](#4-test-public-endpoints) |
+| `/test` | GET | No | -- | [3](#3-deploy-and-verify) |
 | `/dashboard` | GET | No | -- | [4](#4-test-public-endpoints) |
 | `/llms.txt` | GET | No | -- | [4](#4-test-public-endpoints) |
 | `/mcp/tools` | GET | No | -- | [4](#4-test-public-endpoints) |

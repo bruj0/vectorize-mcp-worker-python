@@ -8,9 +8,23 @@ It is a **Cloudflare Python Worker** that provides hybrid RAG (Retrieval-Augment
 
 - **Runtime:** Cloudflare Python Workers (Pyodide). NOT a standalone Python server.
 - **Entry point:** `src/entry.py` -- class `Default(WorkerEntrypoint)` with `async def fetch(self, request)`.
-- **Config:** `wrangler.toml` with `compatibility_flags = ["python_workers"]`.
-- **CLI:** Use `pywrangler` (not `wrangler`) for dev/deploy: `pywrangler dev`, `pywrangler deploy`.
-- **Secrets:** `pywrangler secret put API_KEY` -- never commit secrets.
+- **Config:** `wrangler.toml` (gitignored). Copy `wrangler.toml.example` to get started.
+- **CLI:** Use `pywrangler` (via `uv run pywrangler`) for dev/deploy: `uv run pywrangler dev`, `uv run pywrangler deploy`.
+- **Secrets:** `wrangler secret put API_KEY` -- never commit secrets.
+
+## Critical: Import Paths
+
+The Pyodide runtime treats `src/` as the Python module root (because `wrangler.toml` sets `main = "src/entry.py"`). **All imports must be relative to `src/`**, never prefixed with `src.`:
+
+```python
+# Correct
+from auth import authenticate
+from bindings.ai import CloudflareAIProvider
+
+# WRONG -- causes ModuleNotFoundError at runtime
+from src.auth import authenticate
+from src.bindings.ai import CloudflareAIProvider
+```
 
 ## Cloudflare Bindings
 
@@ -49,9 +63,30 @@ src/bindings/ (JS FFI wrappers for Cloudflare bindings)
     ├── vectorize.py (CloudflareVectorStore)
     ├── d1.py (CloudflareD1KeywordStore + CloudflareD1LicenseStore)
     ├── ai.py (CloudflareAIProvider)
-    ├── multimodal.py (CloudflareMultimodalProcessor)
+    ├── multimodal.py (CloudflareMultimodalProcessor → calls multimodal-pro-worker)
     └── ffi_utils.py (to_js / js_to_dict helpers)
+
+multimodal-pro-worker/ (separate Cloudflare Worker, deployed independently)
+    └── src/entry.py (POST /describe-image → Llama 4 Scout + BGE embedding)
 ```
+
+## Multimodal Pro Worker
+
+A **separate** Python Worker at `multimodal-pro-worker/` that handles image processing. Connected to the main worker via a Cloudflare Service Binding (`env.MULTIMODAL`).
+
+**Single endpoint:** `POST /describe-image`
+
+Pipeline: image → Llama 4 Scout (description) → Llama 4 Scout (OCR) → BGE embedding (384d) → JSON response.
+
+**Deploy separately before enabling image features:**
+
+```bash
+cd multimodal-pro-worker
+uv tool install workers-py    # if not already installed
+uv run pywrangler deploy
+```
+
+The MULTIMODAL binding in `src/entry.py` is optional: if missing, text features work normally; image endpoints (`/ingest-image`, `/find-similar-images`) return 501.
 
 ## Key Design Patterns
 
@@ -122,7 +157,7 @@ All data types in `src/models.py` as Pydantic `BaseModel` classes. Confirmed to 
 
 ## Database Schema
 
-`schema.sql` defines 5 tables in D1: `documents`, `keywords`, `doc_stats`, `term_stats`, `licenses`. Run with: `pywrangler d1 execute mcp-knowledge-db --remote --file=./schema.sql`.
+`schema.sql` defines 5 tables in D1: `documents`, `keywords`, `doc_stats`, `term_stats`, `licenses`. Run with: `wrangler d1 execute mcp-knowledge-db --remote --file=./schema.sql`.
 
 ## Testing
 
@@ -159,9 +194,26 @@ Tests use a `workers` stub (`tests/stubs/workers.py`) for imports that normally 
 
 ## Documentation
 
-- `docs/port_decisions.md` -- Rationale for every design choice.
-- `docs/component_mapping.md` -- Complete TS-to-Python file/class/function mapping.
-- `docs/abstraction_layers.md` -- Protocol design, FFI patterns, testing without runtime.
+All documentation (besides `README.md`) lives in `docs/`. Never place standalone `.md` docs in the project root.
+
+| Document | Purpose |
+|----------|---------|
+| `docs/quickstart.md` | Step-by-step first-time setup guide |
+| `docs/production.md` | Production deployment, security, monitoring, operations |
+| `docs/port_decisions.md` | Rationale for every design choice |
+| `docs/component_mapping.md` | Complete TS-to-Python file/class/function mapping |
+| `docs/abstraction_layers.md` | Protocol design, FFI patterns, testing without runtime |
+
+## Configuration Files
+
+| File | Tracked | Purpose |
+|------|:-------:|---------|
+| `wrangler.toml.example` | Yes | Template with placeholder values -- commit this |
+| `wrangler.toml` | **No** (gitignored) | Local/production config with real DB IDs -- never commit |
+| `multimodal-pro-worker/wrangler.toml` | Yes | Multimodal worker config (no secrets, safe to commit) |
+| `.dev.vars` | **No** (gitignored) | Local development environment variables |
+| `.env` | **No** (gitignored) | Environment variables |
+| `schema.sql` | Yes | D1 database DDL (safe to re-run, uses IF NOT EXISTS) |
 
 ## Common Tasks
 

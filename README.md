@@ -2,6 +2,16 @@
 
 Production-Grade Hybrid RAG with Multimodal Support on Cloudflare Edge in Python.
 
+## Table of Contents
+
+- [Features](#features)
+- [Setup](#setup)
+- [API Endpoints](#api-endpoints)
+- [MCP Integration](#mcp-integration)
+- [Project Structure](#project-structure)
+- [Architecture](#architecture)
+- [Credits](#credits)
+
 ## Features
 
 - Hybrid Search (Vector + BM25) with Reciprocal Rank Fusion
@@ -79,7 +89,7 @@ uv tool install workers-py
 
 ### Create Cloudflare Resources
 
-The project requires three Cloudflare services: **Vectorize** (vector database), **D1** (SQL database), and **Workers AI** (inference). Workers AI is enabled automatically; the other two need to be created.
+The project requires three Cloudflare services: **Vectorize** (vector database), **D1** (SQL database), and **Workers AI** (inference). Workers AI is enabled automatically; the other two need to be created. A fourth service, **multimodal-pro-worker**, is optional and enables image features.
 
 #### 1. Create the Vectorize Index
 
@@ -134,21 +144,35 @@ wrangler secret put API_KEY
 
 You will be prompted to enter the secret value interactively. This is stored encrypted and never appears in `wrangler.toml`.
 
-### Development
+#### 5. Deploy the Multimodal Worker (optional -- for image features)
 
-Start a local dev server with hot reload:
+The image endpoints (`/ingest-image`, `/find-similar-images`) require a separate worker that processes images via Llama 4 Scout. If you only need text search, skip this step.
 
 ```bash
-uv run pywrangler dev
+cd multimodal-pro-worker
+uv tool install workers-py    # if not already installed
+uv run pywrangler deploy
+cd ..
 ```
 
-### Deploy
+This deploys the `multimodal-pro-worker` which the main worker calls via a Service Binding. Without it, text features work normally and image endpoints return a 501 error with a clear message.
+
+### Deploy and Debug
 
 Build and deploy to Cloudflare's global edge network:
 
 ```bash
 uv run pywrangler deploy
 ```
+
+Stream live logs from the deployed worker:
+
+```bash
+wrangler tail --format=json
+```
+
+> For a complete step-by-step guide, see [docs/quickstart.md](docs/quickstart.md).
+> For production deployment, security, and monitoring, see [docs/production.md](docs/production.md).
 
 ## API Endpoints
 
@@ -161,7 +185,7 @@ uv run pywrangler deploy
 | `/stats` | GET | Index statistics |
 | `/search` | POST | Hybrid search |
 | `/ingest` | POST | Document ingestion |
-| `/ingest-image` | POST | Image ingestion |
+| `/ingest-image` | POST | Image ingestion (requires multimodal-pro-worker) |
 | `/documents/:id` | DELETE | Delete document |
 | `/license/validate` | POST | Validate license |
 | `/license/create` | POST | Create license |
@@ -188,10 +212,30 @@ The server exposes a single MCP tool `vectorize` with multiple operations:
 
 Operations: `search`, `ingest`, `ingest_image`, `stats`, `delete`, `license_validate`, `license_create`, `license_list`, `license_revoke`.
 
+## Project Structure
+
+```
+vectorize-mcp-worker-python/
+├── src/                        # Main worker source
+│   ├── entry.py                # HTTP routing and Worker entrypoint
+│   ├── bindings/               # Cloudflare binding wrappers (FFI)
+│   ├── hybrid_search.py        # Vector + BM25 + RRF fusion
+│   ├── ingestion.py            # Document/image ingestion pipeline
+│   └── ...
+├── multimodal-pro-worker/      # Separate worker for image processing
+│   ├── src/entry.py            # Llama 4 Scout vision + OCR + embedding
+│   └── wrangler.toml           # Independent worker config
+├── schema.sql                  # D1 database DDL
+├── wrangler.toml.example       # Template config (copy to wrangler.toml)
+└── docs/                       # All documentation
+```
+
 ## Architecture
 
 See `docs/` for detailed documentation:
 
+- `docs/quickstart.md` -- Step-by-step first-time setup and endpoint testing
+- `docs/production.md` -- Production deployment, security, monitoring, operations
 - `docs/port_decisions.md` -- Technology choices and rationale
 - `docs/component_mapping.md` -- TypeScript to Python mapping
 - `docs/abstraction_layers.md` -- Protocol design and FFI patterns

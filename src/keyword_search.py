@@ -16,10 +16,10 @@ import math
 import re
 from typing import TYPE_CHECKING
 
-from src.models import SearchResult
+from models import SearchResult
 
 if TYPE_CHECKING:
-    from src.protocols import KeywordStore
+    from protocols import KeywordStore
 
 
 # Same stop words as the TS original

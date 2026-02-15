@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from src.auth import json_response
+from auth import json_response
 
 
 # MCP tool schema -- returned by GET /mcp/tools
@@ -173,7 +173,7 @@ async def dispatch_mcp_call(args: dict[str, Any], ctx: dict[str, Any]) -> Any:
         content = args.get("content")
         if not doc_id or not content:
             return {"error": "id and content required for ingest operation"}
-        from src.models import Document
+        from models import Document
         doc = Document(
             id=doc_id,
             content=content,

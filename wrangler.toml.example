@@ -24,5 +24,12 @@ service = "multimodal-pro-worker"
 [observability]
 enabled = true
 
-# Set your API key using: pywrangler secret put API_KEY
-# Never commit your actual API_KEY to git
+# Uncomment to enable verbose debug logging (visible via wrangler tail --format=json)
+# [vars]
+# DEBUG_LOGGING = "true"
+
+# Set your secrets using: pywrangler secret put <NAME>
+# Never commit actual secret values to git
+#   API_KEY          - Bearer token for authenticated endpoints
+#   INTERNAL_SECRET  - Shared secret between main worker and multimodal worker
+#   DEBUG_LOGGING    - Set to "true" to enable debug logs (can also use [vars] above)

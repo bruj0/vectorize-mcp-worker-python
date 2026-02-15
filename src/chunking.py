@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from src.models import Chunk
+from models import Chunk
 
 
 class ChunkingEngine:

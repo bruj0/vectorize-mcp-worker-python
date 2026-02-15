@@ -13,15 +13,17 @@ import uuid
 
 from pyodide.ffi import JsProxy
 
-from src.bindings.ffi_utils import to_js
-from src.models import DocStats, KeywordRow, License
+from bindings.ffi_utils import to_js
+from logger import RequestLogger, noop_logger
+from models import DocStats, KeywordRow, License
 
 
 class CloudflareD1KeywordStore:
     """Implements KeywordStore protocol using env.DB (D1)."""
 
-    def __init__(self, db_binding: JsProxy) -> None:
+    def __init__(self, db_binding: JsProxy, logger: RequestLogger | None = None) -> None:
         self._db = db_binding
+        self._log = logger or noop_logger()
 
     async def index_document(
         self,
@@ -37,16 +39,25 @@ class CloudflareD1KeywordStore:
         terms: dict[str, int],
     ) -> None:
         """Store document row + keyword index + term stats in a D1 batch."""
+        self._log.debug_log(
+            "d1.index_document",
+            docId=doc_id,
+            wordCount=word_count,
+            termCount=len(terms),
+            isImage=is_image,
+        )
         batch_stmts = []
 
         # Insert document row
+        # D1 via Pyodide FFI: Python None becomes JS undefined which D1 rejects.
+        # Convert None to empty string for nullable text columns.
         batch_stmts.append(
             self._db.prepare(
                 "INSERT INTO documents (id, content, title, source, category, "
                 "chunk_index, parent_id, word_count, is_image) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             ).bind(
-                doc_id, content, title, source, category,
+                doc_id, content, title or "", source or "", category or "",
                 chunk_index, parent_id, word_count, 1 if is_image else 0,
             )
         )
@@ -67,10 +78,13 @@ class CloudflareD1KeywordStore:
             )
 
         if batch_stmts:
+            self._log.debug_log("d1.batch", statementCount=len(batch_stmts))
             await self._db.batch(to_js(batch_stmts))
+            self._log.debug_log("d1.batch.ok")
 
     async def update_doc_stats_increment(self, token_count: int) -> None:
         """Increment total_documents and update rolling avg_doc_length."""
+        self._log.debug_log("d1.update_doc_stats", tokenCount=token_count)
         await self._db.prepare(
             "UPDATE doc_stats SET total_documents = total_documents + 1, "
             "avg_doc_length = ((avg_doc_length * total_documents) + ?) / (total_documents + 1) "
@@ -81,11 +95,13 @@ class CloudflareD1KeywordStore:
         self, tokens: list[str], top_k: int
     ) -> tuple[DocStats | None, list[KeywordRow]]:
         """BM25 keyword lookup using D1 SQL. Returns corpus stats and matching rows."""
+        self._log.debug_log("d1.search", tokenCount=len(tokens), topK=top_k)
         stats_row = await self._db.prepare(
             "SELECT total_documents, avg_doc_length FROM doc_stats WHERE id = 1"
         ).first()
 
         if not stats_row or not stats_row.total_documents:
+            self._log.debug_log("d1.search.no_stats")
             return None, []
 
         doc_stats = DocStats(
@@ -109,10 +125,9 @@ class CloudflareD1KeywordStore:
             f"WHERE k.term IN ({placeholders})"
         )
 
-        stmt = self._db.prepare(sql)
-        # Bind tokens individually
-        for token in limited_tokens:
-            stmt = stmt.bind(token)
+        # D1 .bind() takes all parameters at once (variadic in JS).
+        # Calling .bind() multiple times replaces previous bindings.
+        stmt = self._db.prepare(sql).bind(*limited_tokens)
 
         result = await stmt.all()
         rows: list[KeywordRow] = []
@@ -130,10 +145,12 @@ class CloudflareD1KeywordStore:
                     document_frequency=int(r.document_frequency),
                 ))
 
+        self._log.debug_log("d1.search.ok", rowCount=len(rows))
         return doc_stats, rows
 
     async def delete_document(self, doc_id: str) -> list[str]:
         """Delete a document and its chunks. Returns IDs for vector cleanup."""
+        self._log.debug_log("d1.delete_document", docId=doc_id)
         chunks_result = await self._db.prepare(
             "SELECT id FROM documents WHERE id = ? OR parent_id = ?"
         ).bind(doc_id, doc_id).all()
@@ -144,14 +161,17 @@ class CloudflareD1KeywordStore:
                 ids.append(str(chunks_result.results[i].id))
 
         if ids:
+            self._log.debug_log("d1.delete_document.found", chunkIds=ids)
             await self._db.prepare(
                 "DELETE FROM documents WHERE id = ? OR parent_id = ?"
             ).bind(doc_id, doc_id).run()
+            self._log.debug_log("d1.delete_document.ok")
 
         return ids
 
     async def get_doc_stats(self) -> DocStats | None:
         """Fetch corpus-level statistics."""
+        self._log.debug_log("d1.get_doc_stats")
         row = await self._db.prepare(
             "SELECT total_documents, avg_doc_length FROM doc_stats WHERE id = 1"
         ).first()
@@ -164,6 +184,7 @@ class CloudflareD1KeywordStore:
 
     async def document_exists(self, doc_id: str) -> bool:
         """Check if a document or chunk exists."""
+        self._log.debug_log("d1.document_exists", docId=doc_id)
         row = await self._db.prepare(
             "SELECT id FROM documents WHERE id = ? OR parent_id = ?"
         ).bind(doc_id, doc_id).first()
@@ -173,11 +194,13 @@ class CloudflareD1KeywordStore:
 class CloudflareD1LicenseStore:
     """Implements LicenseStore protocol using env.DB (D1)."""
 
-    def __init__(self, db_binding: JsProxy) -> None:
+    def __init__(self, db_binding: JsProxy, logger: RequestLogger | None = None) -> None:
         self._db = db_binding
+        self._log = logger or noop_logger()
 
     async def validate(self, license_key: str) -> License | None:
         """Validate a license key. Returns License if active, None otherwise."""
+        self._log.debug_log("d1.license.validate", keyPrefix=license_key[:8])
         row = await self._db.prepare(
             "SELECT * FROM licenses WHERE license_key = ? AND is_active = 1"
         ).bind(license_key).first()
@@ -204,6 +227,7 @@ class CloudflareD1LicenseStore:
     ) -> License:
         """Create a new license with a generated key."""
         license_key = f"lic_{uuid.uuid4().hex}"
+        self._log.debug_log("d1.license.create", email=email, plan=plan)
 
         if max_documents is None:
             max_documents = {"enterprise": 100000, "pro": 50000}.get(plan, 10000)
@@ -215,6 +239,7 @@ class CloudflareD1LicenseStore:
             "VALUES (?, ?, ?, ?, ?)"
         ).bind(license_key, email, plan, max_documents, max_queries_per_day).run()
 
+        self._log.debug_log("d1.license.created", keyPrefix=license_key[:8])
         return License(
             license_key=license_key,
             email=email,
@@ -225,6 +250,7 @@ class CloudflareD1LicenseStore:
 
     async def list_all(self, limit: int = 100) -> list[License]:
         """List all licenses ordered by creation date descending."""
+        self._log.debug_log("d1.license.list_all", limit=limit)
         result = await self._db.prepare(
             "SELECT license_key, email, plan, max_documents, max_queries_per_day, "
             "created_at, is_active FROM licenses ORDER BY created_at DESC LIMIT ?"
@@ -248,6 +274,7 @@ class CloudflareD1LicenseStore:
 
     async def revoke(self, license_key: str) -> bool:
         """Revoke a license by setting is_active = 0."""
+        self._log.debug_log("d1.license.revoke", keyPrefix=license_key[:8])
         await self._db.prepare(
             "UPDATE licenses SET is_active = 0 WHERE license_key = ?"
         ).bind(license_key).run()

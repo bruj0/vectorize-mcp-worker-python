@@ -9,15 +9,17 @@ Mirrors the TS IngestionEngine class. Handles:
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
-from src.chunking import ChunkingEngine
-from src.keyword_search import compute_term_frequencies, tokenize
-from src.models import VectorRecord
+from chunking import ChunkingEngine
+from keyword_search import compute_term_frequencies, tokenize
+from logger import RequestLogger, noop_logger
+from models import VectorRecord
 
 if TYPE_CHECKING:
-    from src.models import Document, ImageDocument
-    from src.protocols import AIProvider, ImageProcessor, KeywordStore, VectorStore
+    from models import Document, ImageDocument
+    from protocols import AIProvider, ImageProcessor, KeywordStore, VectorStore
 
 
 class IngestionEngine:
@@ -35,6 +37,7 @@ class IngestionEngine:
         vector_store: VectorStore,
         keyword_store: KeywordStore,
         ai_provider: AIProvider,
+        logger: RequestLogger | None = None,
     ) -> dict[str, Any]:
         """Ingest a text document with automatic chunking.
 
@@ -48,20 +51,22 @@ class IngestionEngine:
         Returns:
             Dict with success, chunks count, and performance timings.
         """
-        import time
-
+        log = logger or noop_logger()
         start = time.time()
         perf: dict[str, str] = {}
 
         # De-duplicate
         if await keyword_store.document_exists(doc.id):
-            await self.delete(doc.id, vector_store, keyword_store)
+            log.info("ingest.dedup", docId=doc.id)
+            await self.delete(doc.id, vector_store, keyword_store, logger=log)
 
         chunks = self._chunker.chunk(doc.content, doc.id)
+        log.info("ingest.chunked", docId=doc.id, chunkCount=len(chunks))
         vectors: list[VectorRecord] = []
 
         emb_start = time.time()
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
+            log.debug_log("ingest.chunk.embed", chunkIndex=i, chunkLength=len(chunk.content))
             embedding = await ai_provider.embed(chunk.content)
             tokens = tokenize(chunk.content)
             terms = compute_term_frequencies(tokens)
@@ -96,9 +101,11 @@ class IngestionEngine:
         perf["embeddingTime"] = f"{int((time.time() - emb_start) * 1000)}ms"
 
         if vectors:
+            log.debug_log("ingest.vectorize_upsert", vectorCount=len(vectors))
             await vector_store.upsert(vectors)
 
         perf["totalTime"] = f"{int((time.time() - start) * 1000)}ms"
+        log.info("ingest.complete", docId=doc.id, chunks=len(chunks), totalTime=perf["totalTime"])
 
         return {"success": True, "chunks": len(chunks), "performance": perf}
 
@@ -108,6 +115,7 @@ class IngestionEngine:
         vector_store: VectorStore,
         keyword_store: KeywordStore,
         image_processor: ImageProcessor,
+        logger: RequestLogger | None = None,
     ) -> dict[str, Any]:
         """Ingest an image via the multimodal worker.
 
@@ -119,12 +127,11 @@ class IngestionEngine:
         Returns:
             Dict with success, description, extracted_text, and performance.
         """
-        import time
-
+        log = logger or noop_logger()
         start = time.time()
         perf: dict[str, str] = {}
 
-        multimodal_start = time.time()
+        log.info("ingest_image.multimodal_start", imgId=doc.id, imageSize=len(doc.image_buffer))
         result = await image_processor.describe_image(
             image_buffer=doc.image_buffer,
             image_type=doc.image_type,
@@ -133,6 +140,7 @@ class IngestionEngine:
         perf["multimodalProcessing"] = result.processing_time
 
         if not result.success:
+            log.error("ingest_image.multimodal_failed", imgId=doc.id, error=result.error)
             raise RuntimeError(result.error or "Multimodal processing failed")
 
         # Combine description with extracted text (same as TS original)
@@ -140,10 +148,18 @@ class IngestionEngine:
         if result.extracted_text:
             full_content = f"{result.description}\n\nExtracted Text: {result.extracted_text}"
 
+        log.info(
+            "ingest_image.content_built",
+            imgId=doc.id,
+            contentLength=len(full_content),
+            hasExtractedText=bool(result.extracted_text),
+        )
+
         # Store in D1
         tokens = tokenize(full_content)
         terms = compute_term_frequencies(tokens)
 
+        log.debug_log("ingest_image.d1_store", imgId=doc.id, tokenCount=len(tokens), termCount=len(terms))
         await keyword_store.index_document(
             doc_id=doc.id,
             content=full_content,
@@ -159,6 +175,7 @@ class IngestionEngine:
         await keyword_store.update_doc_stats_increment(len(tokens))
 
         # Store vector from multimodal response
+        log.debug_log("ingest_image.vectorize_upsert", imgId=doc.id, vectorDim=len(result.vector))
         await vector_store.upsert([VectorRecord(
             id=doc.id,
             values=result.vector,
@@ -173,6 +190,7 @@ class IngestionEngine:
         )])
 
         perf["totalTime"] = f"{int((time.time() - start) * 1000)}ms"
+        log.info("ingest_image.complete", imgId=doc.id, totalTime=perf["totalTime"])
 
         return {
             "success": True,
@@ -186,8 +204,13 @@ class IngestionEngine:
         doc_id: str,
         vector_store: VectorStore,
         keyword_store: KeywordStore,
+        logger: RequestLogger | None = None,
     ) -> None:
         """Delete a document and all its chunks from D1 and Vectorize."""
+        log = logger or noop_logger()
+        log.info("delete.start", docId=doc_id)
         ids = await keyword_store.delete_document(doc_id)
         if ids:
+            log.debug_log("delete.vectorize", ids=ids)
             await vector_store.delete_by_ids(ids)
+        log.info("delete.complete", docId=doc_id, deletedChunks=len(ids))

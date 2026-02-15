@@ -29,3 +29,12 @@ Thumbs.db
 
 # uv
 uv.lock
+.env
+
+# Node/Python modules (wrangler deps)
+node_modules/
+python_modules/
+
+# Test artifacts
+test-*.jpg
+test-*.png

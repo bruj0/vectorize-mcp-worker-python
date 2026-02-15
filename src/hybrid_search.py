@@ -12,11 +12,12 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from src.keyword_search import KeywordSearchEngine
-from src.models import HybridSearchResult, SearchResult
+from keyword_search import KeywordSearchEngine
+from logger import RequestLogger, noop_logger
+from models import HybridSearchResult, SearchResult
 
 if TYPE_CHECKING:
-    from src.protocols import AIProvider, KeywordStore, VectorStore
+    from protocols import AIProvider, KeywordStore, VectorStore
 
 
 class HybridSearchEngine:
@@ -83,16 +84,20 @@ class HybridSearchEngine:
         ai_provider: AIProvider,
         top_k: int,
         use_reranker: bool,
+        logger: RequestLogger | None = None,
     ) -> dict[str, Any]:
         """Full hybrid search pipeline: embed -> vector search + BM25 -> RRF -> rerank.
 
         Returns:
             Dict with 'results' (list[HybridSearchResult]) and 'performance' (timing dict).
         """
+        log = logger or noop_logger()
+
         # Check cache
         cache_key = f"{query}-{top_k}-{use_reranker}"
         cached = self._cache.get(cache_key)
         if cached and (time.time() - cached["timestamp"]) < self.CACHE_TTL:
+            log.debug_log("search.cache_hit", cacheKey=cache_key)
             return {
                 "results": cached["results"],
                 "performance": {"totalTime": "0ms (cached)"},
@@ -103,12 +108,15 @@ class HybridSearchEngine:
 
         # Vector search: embed query, then search Vectorize
         emb_start = time.time()
+        log.debug_log("search.embed_start")
         embedding = await ai_provider.embed(query)
         perf["embeddingTime"] = f"{int((time.time() - emb_start) * 1000)}ms"
+        log.debug_log("search.embed_done", time=perf["embeddingTime"])
 
         vec_start = time.time()
         vec_matches = await vector_store.query(embedding, top_k=top_k * 2)
         perf["vectorSearchTime"] = f"{int((time.time() - vec_start) * 1000)}ms"
+        log.debug_log("search.vector_done", time=perf["vectorSearchTime"], matches=len(vec_matches))
 
         vector_results: list[SearchResult] = [
             SearchResult(
@@ -126,15 +134,18 @@ class HybridSearchEngine:
         kw_start = time.time()
         keyword_results = await self._keyword_engine.search(keyword_store, query, top_k * 2)
         perf["keywordSearchTime"] = f"{int((time.time() - kw_start) * 1000)}ms"
+        log.debug_log("search.keyword_done", time=perf["keywordSearchTime"], matches=len(keyword_results))
 
         # Reciprocal Rank Fusion
         results = self.reciprocal_rank_fusion(vector_results, keyword_results, self.RRF_K)
+        log.debug_log("search.rrf_done", fusedCount=len(results))
 
         # Optional cross-encoder reranking
         if use_reranker and results:
             re_start = time.time()
             try:
                 top_results = results[:10]
+                log.debug_log("search.rerank_start", candidateCount=len(top_results))
                 reranker_scores = await ai_provider.rerank(
                     query, [r.content for r in top_results]
                 )
@@ -143,8 +154,9 @@ class HybridSearchEngine:
                     r.reranker_score = score
                     r.rrf_score = r.rrf_score * 0.4 + score * 0.6
                 results = sorted(top_results, key=lambda x: x.rrf_score, reverse=True)
-            except Exception:
-                pass  # Use results without reranking on error, same as TS original
+                log.debug_log("search.rerank_done")
+            except Exception as exc:
+                log.warn("search.rerank_failed", exc=exc)
             perf["rerankerTime"] = f"{int((time.time() - re_start) * 1000)}ms"
 
         perf["totalTime"] = f"{int((time.time() - start) * 1000)}ms"
@@ -153,4 +165,5 @@ class HybridSearchEngine:
         final_results = results[:top_k]
         self._cache[cache_key] = {"results": final_results, "timestamp": time.time()}
 
+        log.info("search.complete", resultCount=len(final_results), totalTime=perf["totalTime"])
         return {"results": final_results, "performance": perf}
