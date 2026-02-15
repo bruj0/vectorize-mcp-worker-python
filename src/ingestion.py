@@ -131,6 +131,11 @@ class IngestionEngine:
         start = time.time()
         perf: dict[str, str] = {}
 
+        # De-duplicate (same as text ingest)
+        if await keyword_store.document_exists(doc.id):
+            log.info("ingest_image.dedup", imgId=doc.id)
+            await self.delete(doc.id, vector_store, keyword_store, logger=log)
+
         log.info("ingest_image.multimodal_start", imgId=doc.id, imageSize=len(doc.image_buffer))
         result = await image_processor.describe_image(
             image_buffer=doc.image_buffer,

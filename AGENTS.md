@@ -46,14 +46,13 @@ HTTP Request
     ▼
 src/entry.py (WorkerEntrypoint -- routing, CORS, auth)
     │
-    ├── src/mcp.py (MCP: single "vectorize" tool with 9 operations)
     ├── src/hybrid_search.py (Vector + BM25 → RRF → optional reranking)
     ├── src/ingestion.py (text chunking + image processing → D1 + Vectorize)
     ├── src/keyword_search.py (BM25 scoring engine)
     ├── src/chunking.py (paragraph-based, 512 chars, 15% overlap)
     ├── src/auth.py (Bearer token + public routes + CORS)
     ├── src/dashboard.py (HTML UI)
-    └── src/llms_txt.py (AI search metadata)
+    └── src/llms_txt.py (AI search metadata -- AUTO-GENERATED, do not edit directly)
     │
     ▼
 src/protocols.py (5 Protocol interfaces)
@@ -61,7 +60,7 @@ src/protocols.py (5 Protocol interfaces)
     ▼
 src/bindings/ (JS FFI wrappers for Cloudflare bindings)
     ├── vectorize.py (CloudflareVectorStore)
-    ├── d1.py (CloudflareD1KeywordStore + CloudflareD1LicenseStore)
+    ├── d1.py (CloudflareD1KeywordStore + CloudflareD1LicenseStore + CloudflareD1SettingsStore)
     ├── ai.py (CloudflareAIProvider)
     ├── multimodal.py (CloudflareMultimodalProcessor → calls multimodal-pro-worker)
     └── ffi_utils.py (to_js / js_to_dict helpers)
@@ -86,7 +85,7 @@ uv tool install workers-py    # if not already installed
 uv run pywrangler deploy
 ```
 
-The MULTIMODAL binding in `src/entry.py` is optional: if missing, text features work normally; image endpoints (`/ingest-image`, `/find-similar-images`) return 501.
+The MULTIMODAL binding in `src/entry.py` is optional: if missing, text features work normally; image endpoints (`/ingest/image`, `/search/similar-images`) return 501.
 
 ## Key Design Patterns
 
@@ -110,11 +109,23 @@ def to_js(obj):
 
 Use `Object.fromEntries` for dicts (Cloudflare bindings expect plain JS Objects, not Maps).
 
-### One MCP Tool with Operations
+### MCP Integration (via vectorize-mcp-tool)
 
-The MCP layer exposes ONE tool named `vectorize` with an `operation` parameter (cerebrov2 pattern). Operations: `search`, `ingest`, `ingest_image`, `stats`, `delete`, `license_validate`, `license_create`, `license_list`, `license_revoke`.
+All MCP operations go through the `vectorize-mcp-tool` package (in `vectorize-mcp-tool/`). There are **no** `/mcp/*` endpoints on the worker. The MCP tool dispatches directly to the worker's REST endpoints.
 
-Endpoint: `POST /mcp/call` with body `{ "tool": "vectorize", "arguments": { "operation": "search", "query": "..." } }`.
+The tool exposes ONE FastMCP tool named `vectorize` with an `operation` parameter. Operations: `search_multimodal`, `search_documents`, `ingest`, `ingest_image`, `stats`, `delete`, `get_document`, `get_image`, `list_documents`, `license_validate`, `license_create`, `license_list`, `license_revoke`, `delete_license`, `reset_all`, `reset_documents`, `reset_licenses`.
+
+The canonical metadata for all operations, parameters, and endpoints lives in `vectorize-mcp-tool/src/vectorize_mcp_tool/metadata.py`.
+
+### Generated File: src/llms_txt.py
+
+`src/llms_txt.py` is **auto-generated** from `vectorize-mcp-tool/src/vectorize_mcp_tool/metadata.py`. Do **not** edit it directly. To regenerate:
+
+```bash
+cd vectorize-mcp-tool && uv run python ../scripts/generate_llms_txt.py
+```
+
+A contract test (`tests/integration/test_llms_txt_contract.py`) will fail if the file is stale.
 
 ### Pydantic Models
 
@@ -136,45 +147,79 @@ All data types in `src/models.py` as Pydantic `BaseModel` classes. Confirmed to 
 
 ## HTTP Endpoints
 
+All endpoints follow the `/operation/target` naming convention (see below).
+
 | Endpoint | Method | Auth Required | Handler |
 |----------|--------|---------------|---------|
 | `/` | GET | No | API documentation JSON |
-| `/test` | GET | No | Health check |
+| `/health/check` | GET | No | Health check |
 | `/dashboard` | GET | No | Interactive HTML playground |
 | `/llms.txt` | GET | No | AI search engine info |
-| `/mcp/tools` | GET | No | MCP tool schema |
-| `/stats` | GET | Yes | Index statistics |
-| `/search` | POST | Yes | Hybrid search |
-| `/ingest` | POST | Yes | Document ingestion |
-| `/ingest-image` | POST | Yes | Image ingestion (multipart form) |
-| `/documents/:id` | DELETE | Yes | Delete document |
+| `/stats/index` | GET | Yes | Index statistics |
+| `/search/multimodal` | POST | Yes | Hybrid search (docs + images, snippet + metadata) |
+| `/search/documents` | POST | Yes | Hybrid search (documents only, snippet + metadata) |
+| `/search/similar-images` | POST | Yes | Visual similarity search (image file input) |
+| `/ingest/document` | POST | Yes | Document ingestion with auto-chunking |
+| `/ingest/image` | POST | Yes | Image ingestion (multipart form) |
+| `/get/document/:id` | GET | Yes | Get full document by ID |
+| `/get/image/:id` | GET | Yes | Get full image document by ID |
+| `/list/documents` | GET | Yes | List documents with pagination |
+| `/delete/document/:id` | DELETE | Yes | Delete document by ID |
+| `/delete/license/:key` | DELETE | Yes | Delete license by key |
+| `/init/reset-passphrase` | POST | Yes | Set/rotate reset passphrase |
+| `/reset/all` | POST | Yes | Wipe all databases (requires passphrase) |
+| `/reset/documents` | POST | Yes | Wipe documents + vectors (requires passphrase) |
+| `/reset/licenses` | POST | Yes | Wipe licenses (requires passphrase) |
 | `/license/validate` | POST | Yes | Validate license key |
 | `/license/create` | POST | Yes | Create license |
 | `/license/list` | GET | Yes | List licenses |
 | `/license/revoke` | POST | Yes | Revoke license |
-| `/mcp/call` | POST | Yes | Execute MCP tool |
-| `/find-similar-images` | POST | Yes | Visual similarity search |
+
+### Search Result Format
+
+All `/search/*` endpoints return **snippets** (truncated content, default 200 chars) plus full metadata instead of full document content. Use `GET /get/document/:id` or `GET /get/image/:id` to retrieve full content. Request body accepts optional `snippetLength` (50-500) to control snippet size.
+
+### Reset Passphrase
+
+All `/reset/*` endpoints require a passphrase in the request body. The passphrase must first be configured via `POST /init/reset-passphrase`. This prevents accidental data deletion by AI agents.
 
 ## Database Schema
 
-`schema.sql` defines 5 tables in D1: `documents`, `keywords`, `doc_stats`, `term_stats`, `licenses`. Run with: `wrangler d1 execute mcp-knowledge-db --remote --file=./schema.sql`.
+`schema.sql` defines 6 tables in D1: `documents`, `keywords`, `doc_stats`, `term_stats`, `licenses`, `settings`. Run with: `wrangler d1 execute mcp-knowledge-db --remote --file=./schema.sql`.
 
 ## Testing
 
 ```bash
-# Install deps
-uv venv .venv && source .venv/bin/activate
-uv pip install pydantic pytest pytest-asyncio
+# Unit tests -- no network, fast (tests all business logic)
+uv run pytest tests/unit/ -v --cov=src --cov-report=term-missing
 
-# Run all unit tests (no Cloudflare runtime needed)
-pytest tests/ -v
+# Integration/contract tests -- verify worker <-> MCP tool sync
+uv run pytest tests/integration/ -v
+
+# MCP tool tests (separate venv)
+cd vectorize-mcp-tool && uv run pytest tests/ -v
+
+# E2E tests against live worker
+VECTORIZE_E2E_URL=https://... VECTORIZE_E2E_API_KEY=... uv run pytest tests/e2e/ -m "not benchmark"
+
+# Benchmarks (persists results to tests/e2e/benchmark_results.json)
+VECTORIZE_E2E_URL=https://... VECTORIZE_E2E_API_KEY=... uv run pytest tests/e2e/ -m benchmark
 ```
 
-Tests use a `workers` stub (`tests/stubs/workers.py`) for imports that normally require the Cloudflare runtime. The `tests/conftest.py` adds this stub to `sys.path` automatically.
+### Test Architecture
 
-**What's testable locally:** chunking, tokenization, BM25 scoring, RRF fusion, MCP schema validation, dispatch argument validation.
+| Directory | Purpose | Network Required |
+|-----------|---------|:----------------:|
+| `tests/unit/` | Business logic, models, auth, multipart, multimodal binding | No |
+| `tests/integration/` | Contract tests: worker endpoints match MCP tool, multimodal worker matches binding, llms.txt freshness | No |
+| `tests/e2e/` | Full flows + benchmarking against live worker | Yes |
+| `vectorize-mcp-tool/tests/` | CLI structure, HTTP client, MCP server dispatch + validation | No |
 
-**What requires `pywrangler dev`:** anything that touches Cloudflare bindings (search, ingest, image processing, licenses).
+Tests use stubs (`tests/stubs/workers.py`, `tests/stubs/js.py`, `tests/stubs/pyodide/`) for imports that normally require the Cloudflare runtime. The `tests/conftest.py` adds these stubs and `src/` to `sys.path` automatically.
+
+**What's testable locally:** auth, models, chunking, tokenization, BM25 scoring, RRF fusion, MCP tool dispatch + validation (in vectorize-mcp-tool/tests/), ingestion engine, hybrid search engine, multipart parsing, multimodal binding, logger, endpoint contract sync, llms.txt freshness.
+
+**What requires a live worker:** full search/ingest flows, image processing, performance benchmarks.
 
 ## Dependencies
 
@@ -190,7 +235,20 @@ Tests use a `workers` stub (`tests/stubs/workers.py`) for imports that normally 
 - Pydantic models in `src/models.py`, protocols in `src/protocols.py`.
 - One binding wrapper per file in `src/bindings/`.
 - Business logic engines as classes with methods that take protocol implementations as parameters.
-- Tests in `tests/unit/` for pure-Python logic.
+- Unit tests in `tests/unit/`, integration tests in `tests/integration/`, E2E tests in `tests/e2e/`.
+- MCP tool tests in `vectorize-mcp-tool/tests/`.
+
+### Endpoint Naming Convention
+
+All HTTP endpoints follow the `/operation/target` pattern:
+
+- **Operation**: the verb/action (`search`, `ingest`, `delete`, `reset`, `list`, `get`, `init`)
+- **Target**: the resource being acted upon (`document`, `image`, `documents`, `licenses`)
+- **Examples**: `POST /ingest/document`, `POST /search/documents`, `DELETE /delete/document/:id`
+- **Exceptions**: `/`, `/dashboard`, `/llms.txt` (root-level utility routes)
+- **Sub-resources**: license endpoints use `/license/{action}` (resource-first grouping)
+
+When adding new endpoints, always follow this pattern. Never use kebab-case for multi-word paths (use `/search/similar-images` not `/find-similar-images`).
 
 ## Documentation
 
@@ -218,12 +276,18 @@ All documentation (besides `README.md`) lives in `docs/`. Never place standalone
 ## Common Tasks
 
 ### Add a new HTTP endpoint
-1. Add route in `src/entry.py` in the `fetch()` method.
-2. If it needs a new protocol method, add to `src/protocols.py` and implement in the relevant `src/bindings/` file.
+1. Follow the `/operation/target` naming convention (see Endpoint Naming Convention above).
+2. Add route in `src/entry.py` in the `fetch()` method.
+3. If it needs a new protocol method, add to `src/protocols.py` and implement in the relevant `src/bindings/` file.
+4. Update the root `/` endpoint documentation JSON, AGENTS.md, and docs.
 
 ### Add a new MCP operation
-1. Add to the `TOOL_SCHEMA` enum and properties in `src/mcp.py`.
-2. Add the `elif operation == "..."` handler in `dispatch_mcp_call()`.
+1. Add the operation to `OPERATIONS` and any new parameters to `PARAMETERS` in `vectorize-mcp-tool/src/vectorize_mcp_tool/metadata.py`.
+2. Add the corresponding REST endpoint handler in `src/entry.py`.
+3. Add the client method in `vectorize-mcp-tool/src/vectorize_mcp_tool/client.py`.
+4. Add the dispatch branch in `vectorize-mcp-tool/src/vectorize_mcp_tool/server.py`.
+5. Regenerate `src/llms_txt.py`: `cd vectorize-mcp-tool && uv run python ../scripts/generate_llms_txt.py`
+6. Add tests in `vectorize-mcp-tool/tests/test_server.py`.
 
 ### Change an algorithm parameter
 All constants are in the engine class `__init__` or as class attributes. The values must stay identical to the TS original unless intentionally diverging.

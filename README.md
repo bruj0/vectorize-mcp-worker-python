@@ -20,7 +20,7 @@ Production-Grade Hybrid RAG with Multimodal Support on Cloudflare Edge in Python
 - Recursive Chunking with 15% overlap
 - One-time License System
 - Interactive Dashboard at `/dashboard`
-- MCP tool integration (`/mcp/tools`, `/mcp/call`)
+- MCP tool integration (via `vectorize-mcp-tool` package)
 
 ## Setup
 
@@ -136,7 +136,7 @@ This creates the following tables:
 
 #### 4. Set the API Key Secret
 
-Set the API key that protects write operations (`/ingest`, `/license/*`):
+Set the API key that protects write operations (`/ingest/document`, `/license/*`):
 
 ```bash
 wrangler secret put API_KEY
@@ -146,7 +146,7 @@ You will be prompted to enter the secret value interactively. This is stored enc
 
 #### 5. Deploy the Multimodal Worker (optional -- for image features)
 
-The image endpoints (`/ingest-image`, `/find-similar-images`) require a separate worker that processes images via Llama 4 Scout. If you only need text search, skip this step.
+The image endpoints (`/ingest/image`, `/search/similar-images`) require a separate worker that processes images via Llama 4 Scout. If you only need text search, skip this step.
 
 ```bash
 cd multimodal-pro-worker
@@ -179,38 +179,52 @@ wrangler tail --format=json
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | API documentation |
-| `/test` | GET | Health check |
+| `/health/check` | GET | Health check |
 | `/dashboard` | GET | Interactive playground UI |
 | `/llms.txt` | GET | AI search engine info |
-| `/stats` | GET | Index statistics |
-| `/search` | POST | Hybrid search |
-| `/ingest` | POST | Document ingestion |
-| `/ingest-image` | POST | Image ingestion (requires multimodal-pro-worker) |
-| `/documents/:id` | DELETE | Delete document |
+| `/stats/index` | GET | Index statistics |
+| `/search/multimodal` | POST | Hybrid search (documents + images) |
+| `/search/documents` | POST | Documents-only search |
+| `/search/similar-images` | POST | Find similar images |
+| `/ingest/document` | POST | Document ingestion |
+| `/ingest/image` | POST | Image ingestion (requires multimodal-pro-worker) |
+| `/get/document/:id` | GET | Get document by ID |
+| `/get/image/:id` | GET | Get image by ID |
+| `/list/documents` | GET | List documents |
+| `/delete/document/:id` | DELETE | Delete document |
+| `/delete/license/:key` | DELETE | Delete license |
 | `/license/validate` | POST | Validate license |
 | `/license/create` | POST | Create license |
 | `/license/list` | GET | List licenses |
 | `/license/revoke` | POST | Revoke license |
-| `/mcp/tools` | GET | List MCP tools |
-| `/mcp/call` | POST | Execute MCP tool |
+| `/init/reset-passphrase` | POST | Set passphrase for reset endpoints |
+| `/reset/all` | POST | Reset all (passphrase-gated) |
+| `/reset/documents` | POST | Reset documents (passphrase-gated) |
+| `/reset/licenses` | POST | Reset licenses (passphrase-gated) |
+
+Search results return snippets and metadata instead of full content. The passphrase-gated reset endpoints (`/init/reset-passphrase`, `/reset/*`) prevent accidental AI deletion.
 
 ## MCP Integration
 
-The server exposes a single MCP tool `vectorize` with multiple operations:
+All MCP operations are performed through the `vectorize-mcp-tool` package, which provides both a CLI and a FastMCP stdio server. The MCP tool dispatches directly to the worker's REST endpoints -- there are no `/mcp/*` proxy endpoints on the worker.
 
-```json
-{
-  "tool": "vectorize",
-  "arguments": {
-    "operation": "search",
-    "query": "your question here",
-    "top_k": 5,
-    "rerank": true
-  }
-}
+Operations: `search_multimodal`, `search_documents`, `ingest`, `ingest_image`, `stats`, `delete`, `get_document`, `get_image`, `list_documents`, `license_validate`, `license_create`, `license_list`, `license_revoke`, `delete_license`, `reset_all`, `reset_documents`, `reset_licenses`.
+
+### Install and Use
+
+```bash
+# Install
+cd vectorize-mcp-tool && pip install -e .
+
+# CLI usage
+vectorize-mcp --url https://your-worker.workers.dev --api-key YOUR_KEY health
+vectorize-mcp --url https://your-worker.workers.dev --api-key YOUR_KEY search multimodal "your query"
+
+# MCP server for Cursor
+vectorize-mcp-server  # reads VECTORIZE_URL and VECTORIZE_API_KEY from env
 ```
 
-Operations: `search`, `ingest`, `ingest_image`, `stats`, `delete`, `license_validate`, `license_create`, `license_list`, `license_revoke`.
+See [vectorize-mcp-tool/README.md](vectorize-mcp-tool/README.md) for full documentation.
 
 ## Project Structure
 
@@ -225,10 +239,38 @@ vectorize-mcp-worker-python/
 ├── multimodal-pro-worker/      # Separate worker for image processing
 │   ├── src/entry.py            # Llama 4 Scout vision + OCR + embedding
 │   └── wrangler.toml           # Independent worker config
+├── vectorize-mcp-tool/         # CLI + MCP server package
+│   ├── src/vectorize_mcp_tool/ # Client, server, CLI
+│   └── tests/                  # MCP tool unit tests
+├── tests/                      # Test suite
+│   ├── unit/                   # Unit tests (no network)
+│   ├── integration/            # Contract tests (worker <-> MCP tool sync)
+│   └── e2e/                    # E2E tests + benchmarks (live worker)
 ├── schema.sql                  # D1 database DDL
 ├── wrangler.toml.example       # Template config (copy to wrangler.toml)
 └── docs/                       # All documentation
 ```
+
+## Testing
+
+```bash
+# Unit tests (no network, fast)
+uv run pytest tests/unit/ --cov=src --cov-report=term-missing
+
+# Integration/contract tests (no network)
+uv run pytest tests/integration/
+
+# MCP tool tests
+cd vectorize-mcp-tool && uv run pytest tests/
+
+# E2E tests (requires live worker)
+VECTORIZE_E2E_URL=https://... VECTORIZE_E2E_API_KEY=... uv run pytest tests/e2e/ -m "not benchmark"
+
+# Benchmarks (persists results, detects regressions)
+VECTORIZE_E2E_URL=https://... VECTORIZE_E2E_API_KEY=... uv run pytest tests/e2e/ -m benchmark
+```
+
+Contract tests in `tests/integration/` verify that the worker and MCP tool stay in sync. Any endpoint change in the worker that isn't reflected in the MCP tool will fail these tests.
 
 ## Architecture
 

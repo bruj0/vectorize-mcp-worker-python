@@ -67,8 +67,10 @@ class CloudflareVectorStore:
         """Get index metadata (vector count, dimensions)."""
         self._log.debug_log("vectorize.describe")
         js_stats = await self._binding.describe()
+
+        # Vectorize API uses "vectorCount" (no trailing "s") in the JS proxy.
         stats = IndexStats(
-            vectors_count=int(getattr(js_stats, "vectorsCount", 0)),
+            vectors_count=int(getattr(js_stats, "vectorCount", 0)),
             dimensions=int(getattr(js_stats, "dimensions", 384)),
         )
         self._log.debug_log("vectorize.describe.ok", vectorCount=stats.vectors_count, dimensions=stats.dimensions)

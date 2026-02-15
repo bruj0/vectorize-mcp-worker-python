@@ -1,7 +1,7 @@
 """Authentication and CORS -- mirrors the TS authenticate() and corsHeaders().
 
 Same logic as the original:
-- Public routes: /, /test, /dashboard, /llms.txt, /mcp/tools
+- Public routes: /, /health/check, /dashboard, /llms.txt
 - API_KEY secret check via Bearer token
 - Dev mode: if API_KEY not set, allow all requests
 - CORS: Access-Control-Allow-Origin: *
@@ -9,14 +9,15 @@ Same logic as the original:
 
 from __future__ import annotations
 
+import hmac
 import json
 from urllib.parse import urlparse
 
 from workers import Response
 
-# Routes that skip authentication (same as TS original)
+# Routes that skip authentication
 PUBLIC_ROUTES: frozenset[str] = frozenset({
-    "/", "/test", "/dashboard", "/llms.txt", "/mcp/tools",
+    "/", "/health/check", "/dashboard", "/llms.txt",
 })
 
 
@@ -65,9 +66,9 @@ def authenticate(request, env) -> Response | None:
             status=401,
         )
 
-    # Validate Bearer token
+    # Validate Bearer token (constant-time comparison to prevent timing attacks)
     token = str(auth_header).replace("Bearer ", "")
-    if token != str(api_key):
+    if not hmac.compare_digest(token, str(api_key)):
         return json_response({"error": "Invalid API key"}, status=403)
 
     return None  # Authentication successful

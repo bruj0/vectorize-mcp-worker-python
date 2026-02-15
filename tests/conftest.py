@@ -20,6 +20,12 @@ _stubs_dir = str(Path(__file__).parent / "stubs")
 if _stubs_dir not in sys.path:
     sys.path.insert(0, _stubs_dir)
 
+# Add src/ to sys.path so worker modules resolve their intra-package imports
+# (e.g. `from models import Chunk`, `from auth import json_response`).
+_src_dir = str(Path(__file__).parent.parent / "src")
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
 
 @pytest.fixture
 def sample_text() -> str:

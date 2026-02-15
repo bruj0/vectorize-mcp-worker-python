@@ -96,6 +96,26 @@ class KeywordStore(Protocol):
         """Increment total_documents and update avg_doc_length after ingestion."""
         ...
 
+    async def get_document(self, doc_id: str) -> dict | None:
+        """Fetch a single document by ID with all columns."""
+        ...
+
+    async def list_documents(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """List documents with pagination. Returns metadata (no full content)."""
+        ...
+
+    async def get_all_document_ids(self) -> list[str]:
+        """Fetch all document IDs. Used by reset to clear Vectorize."""
+        ...
+
+    async def get_documents_metadata(self, ids: list[str]) -> dict[str, dict]:
+        """Batch fetch metadata for document IDs. Returns {id: {title, source, ...}}."""
+        ...
+
+    async def reset(self) -> None:
+        """Delete all documents, keywords, term_stats and reset doc_stats."""
+        ...
+
 
 @runtime_checkable
 class AIProvider(Protocol):
@@ -163,4 +183,12 @@ class LicenseStore(Protocol):
 
     async def revoke(self, license_key: str) -> bool:
         """Revoke a license. Returns True if the operation succeeded."""
+        ...
+
+    async def delete(self, license_key: str) -> bool:
+        """Delete a license row entirely. Returns True if found and deleted."""
+        ...
+
+    async def reset(self) -> int:
+        """Delete all licenses. Returns count of deleted rows."""
         ...

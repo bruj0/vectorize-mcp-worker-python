@@ -60,7 +60,7 @@ sequenceDiagram
     participant V as Vectorize
     participant D as D1 Database
 
-    C->>W: POST /search { query, topK, rerank }
+    C->>W: POST /search/multimodal { query, topK, rerank }
     W->>AI: Generate embedding (BGE Small)
     AI-->>W: vector[384]
 
@@ -93,7 +93,7 @@ sequenceDiagram
     participant V as Vectorize
     participant D as D1 Database
 
-    C->>W: POST /ingest-image (multipart)
+    C->>W: POST /ingest/image (multipart)
     W->>M: Service Binding: image bytes + imageType
     M->>AI: Llama 4 Scout: describe image
     AI-->>M: description text
@@ -113,7 +113,7 @@ sequenceDiagram
 flowchart LR
     Code[Source Code] --> Build["Build<br/>(Pyodide bundle)"]
     Build --> Deploy["Deploy<br/>(wrangler deploy)"]
-    Deploy --> Health{"/test<br/>Health Check"}
+    Deploy --> Health{"/health/check<br/>Health Check"}
     Health -->|All bindings OK| Live["Live on<br/>Cloudflare Edge"]
     Health -->|Binding missing| Fix["Check config<br/>& secrets"]
     Fix --> Deploy
@@ -272,7 +272,7 @@ If you don't need image features, comment out the `[[services]]` block in `wrang
 # service = "multimodal-pro-worker"
 ```
 
-Text features work normally without it; image endpoints (`/ingest-image`, `/find-similar-images`) return HTTP 501.
+Text features work normally without it; image endpoints (`/ingest/image`, `/search/similar-images`) return HTTP 501.
 
 ### Custom Domain
 
@@ -305,7 +305,7 @@ Run these checks after every production deployment:
 ### 1. Health Check
 
 ```bash
-curl https://your-worker-url/test
+curl https://your-worker-url/health/check
 ```
 
 Expected response:
@@ -336,13 +336,13 @@ Verify the JSON response lists all endpoints and shows `"authentication": "requi
 ### 3. Stats Endpoint
 
 ```bash
-curl -H "Authorization: Bearer YOUR_API_KEY" https://your-worker-url/stats
+curl -H "Authorization: Bearer YOUR_API_KEY" https://your-worker-url/stats/index
 ```
 
 ### 4. Search Test
 
 ```bash
-curl -X POST https://your-worker-url/search \
+curl -X POST https://your-worker-url/search/multimodal \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{"query": "test", "topK": 1}'
@@ -359,15 +359,14 @@ Open `https://your-worker-url/dashboard` in a browser. The interactive playgroun
 | Route | Auth Required | Description |
 |-------|:------------:|-------------|
 | `GET /` | No | API documentation (read-only) |
-| `GET /test` | No | Health check |
+| `GET /health/check` | No | Health check |
 | `GET /dashboard` | No | Interactive UI |
 | `GET /llms.txt` | No | AI search engine info |
-| `GET /mcp/tools` | No | MCP tool schema |
 | All other routes | **Yes** | Bearer token required |
 
 ### Production Security Checklist
 
-- [ ] **API_KEY is set** -- verify `/test` returns `"mode": "production"`
+- [ ] **API_KEY is set** -- verify `/health/check` returns `"mode": "production"`
 - [ ] **Strong API key** -- use at least 32 random hex characters
 - [ ] **HTTPS only** -- Cloudflare Workers enforce HTTPS by default on `*.workers.dev`; verify custom domains use Full (Strict) SSL mode
 - [ ] **CORS** -- the worker allows `Access-Control-Allow-Origin: *`. If you need to restrict origins, modify `cors_headers()` in `src/auth.py`
@@ -421,7 +420,7 @@ The worker has `[observability] enabled = true` in `wrangler.toml`. This enables
 
 ### Performance Telemetry
 
-Every `/search` response includes a `performance` object:
+Every `/search/multimodal` response includes a `performance` object:
 
 ```json
 {
@@ -446,7 +445,7 @@ The `HybridSearchEngine` maintains an in-memory cache with a 60-second TTL. Iden
 ### Ingesting Documents
 
 ```bash
-curl -X POST https://your-worker-url/ingest \
+curl -X POST https://your-worker-url/ingest/document \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -d '{
@@ -462,7 +461,7 @@ Documents are automatically chunked (recursive splitting with 15% overlap) and i
 ### Ingesting Images
 
 ```bash
-curl -X POST https://your-worker-url/ingest-image \
+curl -X POST https://your-worker-url/ingest/image \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -F "id=img-001" \
   -F "image=@photo.jpg" \
@@ -485,7 +484,7 @@ Supported `imageType` values: `screenshot`, `diagram`, `document`, `chart`, `pho
 ### Deleting Documents
 
 ```bash
-curl -X DELETE https://your-worker-url/documents/doc-001 \
+curl -X DELETE https://your-worker-url/delete/document/doc-001 \
   -H "Authorization: Bearer YOUR_API_KEY"
 ```
 
@@ -566,7 +565,7 @@ To reduce costs:
 ### Worker Returns 500 Errors
 
 1. Check live logs: `wrangler tail --format=json`
-2. Verify bindings: `curl https://your-worker-url/test` -- check that all bindings are `true`
+2. Verify bindings: `curl https://your-worker-url/health/check` -- check that all bindings are `true`
 3. Check D1 connectivity separately: the health check runs `SELECT 1` against D1
 
 ### "mode": "development" in Production
@@ -579,7 +578,7 @@ wrangler secret put API_KEY
 
 ### Search Returns Empty Results
 
-1. Check index stats: `GET /stats` -- verify `vectorCount > 0`
+1. Check index stats: `GET /stats/index` -- verify `vectorCount > 0`
 2. Ingest a test document and search for its content
 3. Verify the Vectorize index name in `wrangler.toml` matches the one you created
 
@@ -624,7 +623,7 @@ The `multimodal-pro-worker` has not been deployed yet, but the main worker's `wr
 
 ### Image Endpoints Return 501
 
-The `/ingest-image` and `/find-similar-images` endpoints return HTTP 501 when the `MULTIMODAL` service binding is not configured. Deploy `multimodal-pro-worker` and ensure the `[[services]]` block is uncommented in `wrangler.toml`.
+The `/ingest/image` and `/search/similar-images` endpoints return HTTP 501 when the `MULTIMODAL` service binding is not configured. Deploy `multimodal-pro-worker` and ensure the `[[services]]` block is uncommented in `wrangler.toml`.
 
 ### High Latency
 
@@ -633,3 +632,18 @@ The `/ingest-image` and `/find-similar-images` endpoints return HTTP 501 when th
 3. Reduce `topK` to limit the number of results processed
 4. Repeated queries benefit from the 60-second cache
 5. Image ingestion takes ~7-8s due to two Llama 4 Scout calls (description + OCR) plus embedding -- this is expected
+
+## Automated E2E Monitoring
+
+The project includes an E2E benchmark suite that can be run on a schedule to detect performance regressions in production:
+
+```bash
+# Run benchmarks against production worker
+VECTORIZE_E2E_URL=https://your-worker.workers.dev \
+VECTORIZE_E2E_API_KEY=your-api-key \
+uv run pytest tests/e2e/ -m benchmark -v
+```
+
+Results are persisted to `tests/e2e/benchmark_results.json`. On each run, the framework compares current p50 latencies against historical baselines and flags any operations that are >20% slower as regressions.
+
+This can be integrated into CI/CD to block deploys when performance degrades.

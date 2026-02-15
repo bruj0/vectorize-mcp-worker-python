@@ -173,7 +173,32 @@ to_js([{"id": v.id, "values": v.values, "metadata": v.metadata}])
 to_js([{"id": v.id, "values": [float(x) for x in v.values], "metadata": v.metadata}])
 ```
 
-**Vectorize `describe()` is eventually consistent.** After upsert, `vectorCount` in `describe()` can stay at 0 for 30-60+ seconds while vectors are already fully queryable via `query()`. Don't use `vectorCount` to verify upserts -- use an actual search query instead.
+### Vectorize `describe()` Response Shape
+
+The JS proxy returned by `await env.VECTORIZE.describe()` has exactly **4 properties**:
+
+| JS Property | Python type | Example |
+|---|---|---|
+| `vectorCount` | `int` | `9` |
+| `dimensions` | `int` | `384` |
+| `processedUpToMutation` | `str` (UUID) | `"7a381f33-b392-4d2b-..."` |
+| `processedUpToDatetime` | `str` (ISO 8601) | `"2026-02-15T17:11:25.990Z"` |
+
+**Critical: the property is `vectorCount` (no trailing "s"), NOT `vectorsCount`.** Using `getattr(js_stats, "vectorsCount", 0)` silently falls back to 0 and always reports zero vectors.
+
+```python
+js_stats = await env.VECTORIZE.describe()
+
+# WRONG -- always returns 0, silently falls back to default
+int(getattr(js_stats, "vectorsCount", 0))
+
+# CORRECT
+int(getattr(js_stats, "vectorCount", 0))
+```
+
+The `metric` (e.g. `"cosine"`) is on the index config (returned by `wrangler vectorize get`), NOT on the `describe()` response.
+
+**Eventual consistency.** After upsert, `vectorCount` in `describe()` can stay at 0 for 30-60+ seconds while vectors are already fully queryable via `query()`. Don't use `vectorCount` to verify upserts -- use an actual search query instead.
 
 ### Critical: `request.formData()` Does Not Exist
 
@@ -340,9 +365,10 @@ This is the fastest way to debug FFI issues since you can inspect actual types a
 | Worker starts then crashes silently | Missing binding in `wrangler.toml` | Check all bindings are declared in wrangler.toml |
 | `Could not resolve service binding` | Target worker not deployed yet | Deploy target worker first, then caller |
 | `D1_ERROR: Wrong number of parameter bindings` | `.bind()` called in a loop (replaces previous) | Use `.bind(*params)` to spread all at once |
-| `vectorCount: 0` but search works | Vectorize `describe()` is eventually consistent | Not a bug -- verify with search, not stats |
+| `vectorCount: 0` but search works | JS property is `vectorCount` not `vectorsCount` | Use `getattr(js_stats, "vectorCount", 0)` -- no trailing "s" |
 | `'Request' object has no attribute 'formData'` | Python workers.Request doesn't wrap JS formData() | Use `parse_multipart(request)` from `src/multipart.py` |
 | `fetch() takes 1 positional argument but 2 were given` | Service binding `.fetch()` wrapped by workers lib | Create `JsRequest.new(url, init)` first, pass as single arg |
+| Vision model says "There is no photograph provided" | Using top-level `image` field with Llama 4 Scout | Use multimodal content array: `content: [{type: "text", ...}, {type: "image_url", ...}]` |
 
 ## Supported AI Models
 
@@ -350,7 +376,36 @@ This is the fastest way to debug FFI issues since you can inspect actual types a
 |----------|---------|------|
 | `@cf/baai/bge-small-en-v1.5` | Text embeddings | 384 |
 | `@cf/baai/bge-reranker-base` | Cross-encoder reranking | -- |
-| `@cf/meta/llama-4-scout-17b-16e-instruct` | Vision / image description | -- |
+| `@cf/meta/llama-4-scout-17b-16e-instruct` | Vision / image description (multimodal content format) | -- |
+
+### Critical: Llama 4 Scout Vision Input Format
+
+Llama 4 Scout does **NOT** use a top-level `image` field (unlike Llama 3.2 Vision / LLaVA). It uses the **OpenAI-style multimodal content format** where the image is embedded inside the message `content` as an array of typed objects. HTTP URLs are not accepted -- only `data:` URIs.
+
+```python
+import base64
+
+b64 = base64.b64encode(image_bytes).decode("ascii")
+data_url = f"data:image/jpeg;base64,{b64}"
+
+input_data = to_js({
+    "messages": [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        },
+    ],
+    "max_tokens": 1024,
+})
+result = await env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", input_data)
+```
+
+If you pass the image as a top-level `image` field (number array, Uint8Array, or base64 string), the model runs successfully but responds with "There is no photograph provided" -- it silently ignores the field.
+
+Ref: https://developers.cloudflare.com/workers-ai/models/llama-4-scout-17b-16e-instruct/
 
 ## Testing Without Cloudflare Runtime
 

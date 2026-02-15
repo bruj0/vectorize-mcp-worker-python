@@ -120,10 +120,12 @@ class Default(WorkerEntrypoint):
             return json_response({"error": "Method not allowed"}, status=405)
 
         # Shared-secret auth: reject requests without a valid INTERNAL_SECRET
+        # Uses constant-time comparison to prevent timing attacks
+        import hmac
         internal_secret = getattr(self.env, "INTERNAL_SECRET", None)
         if internal_secret:
             auth_header = request.headers.get("X-Internal-Secret") or ""
-            if str(auth_header) != str(internal_secret):
+            if not hmac.compare_digest(str(auth_header), str(internal_secret)):
                 log.warn("auth.rejected", hasHeader=bool(auth_header))
                 return json_response(
                     {"error": "Unauthorized. This worker is internal-only."},
@@ -265,16 +267,29 @@ class Default(WorkerEntrypoint):
 
     async def _run_vision(self, image_bytes: bytes, prompt: str, log: RequestLogger) -> str:
         """Call Llama 4 Scout with an image and text prompt."""
-        log.debug_log("ai.vision.call", model=VISION_MODEL, promptLength=len(prompt))
-        # Workers AI vision expects messages with image as a list of ints
+        import base64
+
+        log.debug_log("ai.vision.call", model=VISION_MODEL, promptLength=len(prompt), imageSize=len(image_bytes))
+
+        # Llama 4 Scout uses the OpenAI-style multimodal content format.
+        # The image goes INSIDE the message content array as an image_url
+        # object with a base64 data URI.  There is NO top-level "image" field.
+        # Ref: https://developers.cloudflare.com/workers-ai/models/llama-4-scout-17b-16e-instruct/
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        data_url = f"data:image/jpeg;base64,{b64}"
+        log.debug_log("ai.vision.image_encoded", base64Length=len(b64))
+
         input_data = to_js({
             "messages": [
                 {
                     "role": "user",
-                    "content": prompt,
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
                 },
             ],
-            "image": list(image_bytes),
+            "max_tokens": 1024,
         })
 
         result = await self.env.AI.run(VISION_MODEL, input_data)

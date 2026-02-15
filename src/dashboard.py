@@ -211,6 +211,7 @@ Powered by <a href="https://developers.cloudflare.com/workers/" target="_blank">
 
 <script>
 const API_BASE = '';
+function esc(s){if(s==null)return '';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 const getHeaders = () => {
 const h = {'Content-Type':'application/json'};
 const key = document.getElementById('apiKey').value;
@@ -245,17 +246,17 @@ async function testAuth(){
 const el = document.getElementById('authStatus');
 el.style.display = 'block'; el.innerHTML = 'Testing...';
 try {
-const r = await fetch(API_BASE + '/test');
+const r = await fetch(API_BASE + '/health/check');
 const d = await r.json();
 const apiKey = document.getElementById('apiKey').value;
 const authStatus = apiKey ? '<span class="success">Authenticated</span>' : '<span style="color:#fbbf24">Server Online</span> (enter API key to access protected endpoints)';
-el.innerHTML = authStatus + ' | Mode: ' + d.mode + ' | Database: ' + (d.bindings.hasD1?'OK':'N/A');
-} catch(e) { el.innerHTML = '<span class="error">Error: ' + e.message + '</span>'; }
+el.innerHTML = authStatus + ' | Mode: ' + esc(d.mode) + ' | Database: ' + (d.bindings.hasD1?'OK':'N/A');
+} catch(e) { el.innerHTML = '<span class="error">Error: ' + esc(e.message) + '</span>'; }
 }
 
 async function loadStats(){
 try {
-const r = await fetch(API_BASE + '/stats', {headers: getHeaders()});
+const r = await fetch(API_BASE + '/stats/index', {headers: getHeaders()});
 const d = await r.json();
 document.getElementById('vectorCount').textContent = d.index?.vectorCount || 0;
 document.getElementById('docCount').textContent = d.documents?.total_documents || 0;
@@ -271,11 +272,11 @@ const content = document.getElementById('docContent').value;
 const category = document.getElementById('docCategory').value;
 if(!id || !content) { log.innerHTML = '<span class="error">ID and content required</span>'; return; }
 try {
-const r = await fetch(API_BASE + '/ingest', { method: 'POST', headers: getHeaders(), body: JSON.stringify({id, content, category: category || undefined}) });
+const r = await fetch(API_BASE + '/ingest/document', { method: 'POST', headers: getHeaders(), body: JSON.stringify({id, content, category: category || undefined}) });
 const d = await r.json();
 if(d.success) { log.innerHTML = '<span class="success">Ingested!</span> Chunks: ' + d.chunksCreated + ' | Time: ' + d.performance.totalTime; document.getElementById('docId').value = ''; document.getElementById('docContent').value = ''; loadStats(); }
-else { log.innerHTML = '<span class="error">' + (d.error || 'Unknown error') + '</span>'; }
-} catch(e) { log.innerHTML = '<span class="error">' + e.message + '</span>'; }
+else { log.innerHTML = '<span class="error">' + esc(d.error || 'Unknown error') + '</span>'; }
+} catch(e) { log.innerHTML = '<span class="error">' + esc(e.message) + '</span>'; }
 }
 
 async function ingestImage(){
@@ -300,11 +301,11 @@ if(imageType !== 'auto') formData.append('imageType', imageType);
 const headers = {};
 const apiKey = document.getElementById('apiKey').value;
 if(apiKey) headers['Authorization'] = 'Bearer ' + apiKey;
-const r = await fetch(API_BASE + '/ingest-image', { method: 'POST', headers: headers, body: formData });
+const r = await fetch(API_BASE + '/ingest/image', { method: 'POST', headers: headers, body: formData });
 const d = await r.json();
-if(d.success) { log.innerHTML = '<span class="success">Image Ingested!</span><br>Compressed: ' + originalSizeMB + 'MB -> ' + compressedSizeMB + 'MB<br>Description: ' + (d.description || '').substring(0, 150) + '...<br>' + (d.extractedText ? 'OCR Text: ' + d.extractedText.substring(0, 100) + '...<br>' : '') + 'Time: ' + d.performance.totalTime; document.getElementById('imageId').value = ''; document.getElementById('imageFile').value = ''; loadStats(); }
-else { log.innerHTML = '<span class="error">' + (d.error || 'Unknown error') + '</span>'; }
-} catch(e) { log.innerHTML = '<span class="error">' + e.message + '</span>'; }
+if(d.success) { log.innerHTML = '<span class="success">Image Ingested!</span><br>Compressed: ' + esc(originalSizeMB) + 'MB -> ' + esc(compressedSizeMB) + 'MB<br>Description: ' + esc((d.description || '').substring(0, 150)) + '...<br>' + (d.extractedText ? 'OCR Text: ' + esc(d.extractedText.substring(0, 100)) + '...<br>' : '') + 'Time: ' + esc(d.performance.totalTime); document.getElementById('imageId').value = ''; document.getElementById('imageFile').value = ''; loadStats(); }
+else { log.innerHTML = '<span class="error">' + esc(d.error || 'Unknown error') + '</span>'; }
+} catch(e) { log.innerHTML = '<span class="error">' + esc(e.message) + '</span>'; }
 }
 
 async function search(){
@@ -314,13 +315,13 @@ res.innerHTML = 'Searching...';
 const query = document.getElementById('searchQuery').value;
 if(!query) { res.innerHTML = '<span class="error">Enter a query</span>'; return; }
 try {
-const r = await fetch(API_BASE + '/search', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ query, topK: parseInt(document.getElementById('topK').value), rerank: document.getElementById('useRerank').checked }) });
+const r = await fetch(API_BASE + '/search/multimodal', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ query, topK: parseInt(document.getElementById('topK').value), rerank: document.getElementById('useRerank').checked }) });
 const d = await r.json();
-if(d.error) { res.innerHTML = '<span class="error">' + d.error + '</span>'; return; }
-res.innerHTML = d.results.map(r => '<div class="result"><div class="result-header">' + (r.isImage ? '<span class="image-badge">IMAGE</span>' : '') + '<span class="result-id">' + r.id + '</span><span class="result-score">Score: ' + r.score.toFixed(4) + '</span></div><div class="result-content">' + r.content.substring(0,300) + (r.content.length>300?'...':'') + '</div>' + (r.category ? '<span class="result-category">' + r.category + '</span>' : '') + '</div>').join('') || '<span class="error">No results</span>';
+if(d.error) { res.innerHTML = '<span class="error">' + esc(d.error) + '</span>'; return; }
+res.innerHTML = d.results.map(r => '<div class="result"><div class="result-header">' + (r.isImage ? '<span class="image-badge">IMAGE</span>' : '') + '<span class="result-id">' + esc(r.id) + '</span><span class="result-score">Score: ' + r.score.toFixed(4) + '</span></div><div class="result-content">' + esc(r.content.substring(0,300)) + (r.content.length>300?'...':'') + '</div>' + (r.category ? '<span class="result-category">' + esc(r.category) + '</span>' : '') + '</div>').join('') || '<span class="error">No results</span>';
 perf.style.display = 'block';
-document.getElementById('perfGrid').innerHTML = Object.entries(d.performance).map(function(e) { return '<div class="perf-item">' + e[0] + ': <span>' + e[1] + '</span></div>'; }).join('');
-} catch(e) { res.innerHTML = '<span class="error">' + e.message + '</span>'; }
+document.getElementById('perfGrid').innerHTML = Object.entries(d.performance).map(function(e) { return '<div class="perf-item">' + esc(e[0]) + ': <span>' + esc(e[1]) + '</span></div>'; }).join('');
+} catch(e) { res.innerHTML = '<span class="error">' + esc(e.message) + '</span>'; }
 }
 
 async function searchImages(){ document.getElementById('searchQuery').value = 'dashboard navigation'; await search(); var dl = document.getElementById('demoLog'); dl.style.display = 'block'; dl.innerHTML = '<span class="success">Search complete!</span> Notice the IMAGE badges on results showing screenshots.'; }

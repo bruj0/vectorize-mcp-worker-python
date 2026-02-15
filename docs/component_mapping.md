@@ -56,12 +56,25 @@ Python equivalent.
 | `ImageProcessor` | `env.MULTIMODAL` | `CloudflareMultimodalProcessor` |
 | `LicenseStore` | `env.DB` (licenses table) | `CloudflareD1LicenseStore` |
 
-## MCP Endpoints
+## MCP Integration (via vectorize-mcp-tool)
 
-| TS | Python |
-|----|--------|
-| `GET /mcp/tools` returns 4 tools | `GET /mcp/tools` returns 1 tool with 9 operations |
-| `POST /mcp/call { tool: "search" }` | `POST /mcp/call { tool: "vectorize", arguments: { operation: "search" } }` |
+The `/mcp/tools` and `/mcp/call` endpoints have been removed from the worker. All MCP operations are now performed through the `vectorize-mcp-tool` package, which dispatches directly to the worker's REST endpoints.
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| `VectorizeClient` | `vectorize-mcp-tool/src/vectorize_mcp_tool/client.py` | HTTP client for all worker REST endpoints |
+| MCP Server | `vectorize-mcp-tool/src/vectorize_mcp_tool/server.py` | FastMCP stdio server for Cursor/agent integration |
+| Metadata | `vectorize-mcp-tool/src/vectorize_mcp_tool/metadata.py` | Single source of truth for operations, parameters, endpoints |
+| CLI | `vectorize-mcp-tool/src/vectorize_mcp_tool/cli.py` | Click CLI for manual testing |
+
+## Test Mapping
+
+| Test Directory | Tests For | Network |
+|---------------|-----------|:-------:|
+| `tests/unit/` | auth, models, chunking, BM25, RRF, MCP dispatch, ingestion, hybrid search, multipart, logger, multimodal binding | No |
+| `tests/integration/` | Worker <-> MCP tool endpoint sync, multimodal worker <-> binding sync, request schema consistency | No |
+| `tests/e2e/` | Full document/license lifecycle, search, benchmarks | Yes |
+| `vectorize-mcp-tool/tests/` | Client HTTP construction, CLI structure, MCP server dispatch | No |
 
 ## Constants
 

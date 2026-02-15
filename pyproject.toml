@@ -21,6 +21,21 @@ dev = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
+markers = [
+    "benchmark: E2E benchmark tests (require VECTORIZE_E2E_URL)",
+    "e2e: E2E tests against live worker (require VECTORIZE_E2E_URL)",
+    "integration: integration/contract tests",
+]
+
+[tool.coverage.run]
+source = ["src", "multimodal-pro-worker/src"]
+
+[tool.coverage.report]
+# Exclude Cloudflare JS FFI bindings and entry routing (tested via integration/E2E)
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]
 
 [tool.ruff]
 target-version = "py312"
