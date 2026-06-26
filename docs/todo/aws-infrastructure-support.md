@@ -66,7 +66,7 @@ flowchart TB
 
 Aurora with pgvector handles:
 
-- All SQL tables (documents, keywords, term_stats, doc_stats, licenses, settings) -- direct port from D1
+- All SQL tables (documents, keywords, term_stats, doc_stats, licenses, settings) -- direct migration from D1
 - Vector storage and cosine similarity search via `vector(384)` column type
 - Full-text search capabilities (PostgreSQL `tsvector` as an optional upgrade over manual BM25)
 
@@ -209,7 +209,7 @@ New Python dependencies for AWS:
 ## Task Checklist
 
 - [ ] Create AWS binding implementations in `src/bindings/aws/` -- AuroraKeywordStore, AuroraVectorStore, BedrockAIProvider, BedrockImageProcessor, AuroraLicenseStore, AuroraSettingsStore
-- [ ] Port `schema.sql` to PostgreSQL syntax with pgvector extension (`schema_postgres.sql`)
+- [ ] Migrate schema.sql to PostgreSQL syntax with pgvector extension (`schema_postgres.sql`)
 - [ ] Create AWS entry point -- Lambda handler or FastAPI app with Mangum adapter
 - [ ] Add provider factory (`src/config.py`) for environment-based Cloudflare/AWS binding selection
 - [ ] Create Terraform modules in `infra/aws/` for Aurora Serverless, Lambda, IAM, VPC, Secrets Manager

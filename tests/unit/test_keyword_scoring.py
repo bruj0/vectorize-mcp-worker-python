@@ -6,7 +6,7 @@ from src.keyword_search import STOP_WORDS, compute_term_frequencies, tokenize
 
 
 class TestTokenize:
-    """Test tokenization matches the TS original."""
+    """Test tokenization."""
 
     def test_basic_tokenization(self) -> None:
         """Lowercase, strip punctuation, filter short tokens and stop words."""
@@ -19,7 +19,7 @@ class TestTokenize:
         assert "the" not in tokens
 
     def test_stop_words_removed(self) -> None:
-        """All stop words from the TS original are filtered."""
+        """All standard stop words are filtered."""
         text = " ".join(STOP_WORDS)
         tokens = tokenize(text)
         # All stop words plus short ones (<= 2 chars) should be removed

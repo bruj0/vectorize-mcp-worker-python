@@ -637,11 +637,11 @@ Cursor should call the `vectorize` tool with `operation: "search_multimodal"` an
 
 Other things to try:
 
-> Ingest a new document about TypeScript with id "doc-ts-intro"
+> Ingest a new document about databases with id "doc-db-intro"
 
 > Show me the knowledge base statistics
 
-> Delete the document with id "doc-ts-intro"
+> Delete the document with id "doc-db-intro"
 
 ### Troubleshooting
 

@@ -1,6 +1,6 @@
-"""Authentication and CORS -- mirrors the TS authenticate() and corsHeaders().
+"""Authentication and CORS.
 
-Same logic as the original:
+Enforces:
 - Public routes: /, /health/check, /dashboard, /llms.txt
 - API_KEY secret check via Bearer token
 - Dev mode: if API_KEY not set, allow all requests
@@ -22,7 +22,7 @@ PUBLIC_ROUTES: frozenset[str] = frozenset({
 
 
 def cors_headers() -> dict[str, str]:
-    """CORS headers applied to all responses. Same as TS corsHeaders()."""
+    """CORS headers applied to all responses."""
     return {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -39,10 +39,7 @@ def json_response(data: dict, status: int = 200, extra_headers: dict | None = No
 
 
 def authenticate(request, env) -> Response | None:
-    """Authenticate a request. Returns an error Response or None if OK.
-
-    Mirrors the TS authenticate() function exactly.
-    """
+    """Authenticate a request. Returns an error Response or None if OK."""
     url = urlparse(str(request.url))
     pathname = url.path
 

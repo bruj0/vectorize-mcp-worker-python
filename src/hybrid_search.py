@@ -1,6 +1,6 @@
 """HybridSearchEngine -- Reciprocal Rank Fusion with optional reranking.
 
-Identical algorithm to the TS original:
+Algorithm settings:
 - RRF constant k = 60
 - Reranker weight: 0.4 * RRF + 0.6 * reranker score
 - In-memory cache with 60s TTL
@@ -21,10 +21,7 @@ if TYPE_CHECKING:
 
 
 class HybridSearchEngine:
-    """Hybrid search combining vector + BM25 with RRF fusion.
-
-    Mirrors the TS HybridSearchEngine class.
-    """
+    """Hybrid search combining vector + BM25 with RRF fusion."""
 
     RRF_K = 60
     CACHE_TTL = 60.0  # seconds
@@ -41,7 +38,7 @@ class HybridSearchEngine:
     ) -> list[HybridSearchResult]:
         """Merge vector and keyword results using Reciprocal Rank Fusion.
 
-        Same formula as the TS original: score = sum(1 / (k + rank + 1)).
+        RRF formula: score = sum(1 / (k + rank + 1)).
         """
         scores: dict[str, HybridSearchResult] = {}
 

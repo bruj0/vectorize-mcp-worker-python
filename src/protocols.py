@@ -121,8 +121,7 @@ class KeywordStore(Protocol):
 class AIProvider(Protocol):
     """Wraps env.AI -- Cloudflare Workers AI.
 
-    Provides embedding generation and cross-encoder reranking using
-    the same models as the TS original.
+    Provides embedding generation and cross-encoder reranking.
     """
 
     async def embed(self, text: str) -> list[float]:
@@ -143,7 +142,7 @@ class ImageProcessor(Protocol):
     """Wraps env.MULTIMODAL -- service binding to the multimodal worker.
 
     Mirrors the POST to http://internal/describe-image with the same
-    request/response contract as the TS original.
+    request/response contract.
     """
 
     async def describe_image(
@@ -160,7 +159,7 @@ class ImageProcessor(Protocol):
 class LicenseStore(Protocol):
     """Wraps env.DB for the licenses table.
 
-    Same CRUD operations as the TS original's license endpoints.
+    CRUD operations for license keys.
     """
 
     async def validate(self, license_key: str) -> License | None:

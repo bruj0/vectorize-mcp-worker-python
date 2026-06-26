@@ -1,12 +1,8 @@
-"""Dashboard HTML -- interactive playground UI.
-
-Identical HTML/CSS/JS to the TS original's getDashboardHTML() function.
-The only change is the subtitle mentions "Python" runtime.
-"""
+"""Dashboard HTML -- interactive playground UI."""
 
 
 def get_dashboard_html() -> str:
-    """Return the full dashboard HTML. Same as TS getDashboardHTML()."""
+    """Return the full dashboard HTML."""
     return '''<!DOCTYPE html>
 <html lang="en">
 <head>

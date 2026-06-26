@@ -1,7 +1,6 @@
-"""Pydantic data models -- mirrors TypeScript interfaces from the original.
+"""Pydantic data models.
 
-Each model maps 1:1 to a TS interface in src/index.ts, providing type safety
-and validation that the original gets from TypeScript's type system.
+Provides type safety and validation for database and vector records.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from pydantic import BaseModel, Field
 
 
 class Document(BaseModel):
-    """Mirrors the TS `Document` interface."""
+    """Model representing an ingested document."""
 
     id: str
     content: str
@@ -22,7 +21,7 @@ class Document(BaseModel):
 
 
 class ImageDocument(Document):
-    """Mirrors the TS `ImageDocument` interface.
+    """Model representing an ingested image.
 
     Extends Document with image-specific fields for multimodal ingestion.
     """
@@ -33,10 +32,7 @@ class ImageDocument(Document):
 
 
 class Chunk(BaseModel):
-    """Mirrors the TS `Chunk` interface.
-
-    Represents a text segment produced by the ChunkingEngine.
-    """
+    """Represents a text segment produced by the ChunkingEngine."""
 
     id: str
     content: str
@@ -45,7 +41,7 @@ class Chunk(BaseModel):
 
 
 class SearchResult(BaseModel):
-    """Mirrors the TS `SearchResult` interface."""
+    """Model representing a search result."""
 
     id: str
     content: str
@@ -56,7 +52,7 @@ class SearchResult(BaseModel):
 
 
 class HybridSearchResult(SearchResult):
-    """Mirrors the TS `HybridSearchResult` interface.
+    """Model representing a hybrid search result.
 
     Extends SearchResult with per-source scores and the fused RRF score.
     """
@@ -105,7 +101,7 @@ class ImageDescription(BaseModel):
 
 
 class License(BaseModel):
-    """Mirrors the inline license type used in D1 queries."""
+    """Model representing an API license."""
 
     license_key: str
     email: str | None = None

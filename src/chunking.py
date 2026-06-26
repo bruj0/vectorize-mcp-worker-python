@@ -1,6 +1,6 @@
 """ChunkingEngine -- paragraph-based recursive chunking with overlap.
 
-Identical algorithm to the TS original:
+Chunking algorithm settings:
 - Max chunk size: 512 characters
 - Overlap: 15% of max chunk size
 - Min chunk size: 100 characters
@@ -15,10 +15,7 @@ from models import Chunk
 
 
 class ChunkingEngine:
-    """Respects semantic boundaries with 15% overlap.
-
-    Mirrors the TS ChunkingEngine class exactly.
-    """
+    """Respects semantic boundaries with 15% overlap."""
 
     def __init__(
         self,

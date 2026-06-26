@@ -1,6 +1,6 @@
 """KeywordSearchEngine -- BM25 keyword search.
 
-Identical parameters to the TS original:
+BM25 parameters:
 - k1 = 1.2
 - b = 0.75
 - Same stop words list
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from protocols import KeywordStore
 
 
-# Same stop words as the TS original
+# Standard stop words
 STOP_WORDS: frozenset[str] = frozenset({
     "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
     "of", "with", "by", "is", "are", "was", "were", "be", "this", "that",
@@ -31,7 +31,7 @@ STOP_WORDS: frozenset[str] = frozenset({
 
 
 def tokenize(text: str) -> list[str]:
-    """Tokenize text using the same rules as the TS original.
+    """Tokenize text.
 
     Lowercase, replace non-word chars with spaces, split on whitespace,
     filter tokens shorter than 3 chars and stop words.
@@ -52,10 +52,7 @@ def compute_term_frequencies(tokens: list[str]) -> dict[str, int]:
 
 
 class KeywordSearchEngine:
-    """BM25 scoring engine. Delegates storage to KeywordStore protocol.
-
-    Mirrors the TS KeywordSearchEngine class.
-    """
+    """BM25 scoring engine. Delegates storage to KeywordStore protocol."""
 
     def __init__(self, k1: float = 1.2, b: float = 0.75) -> None:
         self.k1 = k1

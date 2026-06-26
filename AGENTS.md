@@ -131,7 +131,7 @@ A contract test (`tests/integration/test_llms_txt_contract.py`) will fail if the
 
 All data types in `src/models.py` as Pydantic `BaseModel` classes. Confirmed to work in Pyodide. Models: `Document`, `ImageDocument`, `Chunk`, `SearchResult`, `HybridSearchResult`, `VectorRecord`, `VectorMatch`, `IndexStats`, `ImageDescription`, `License`, `DocStats`, `KeywordRow`.
 
-## Algorithm Constants (identical to TS original)
+## Algorithm Constants
 
 | Constant | Value | Location |
 |----------|-------|----------|
@@ -258,8 +258,6 @@ All documentation (besides `README.md`) lives in `docs/`. Never place standalone
 |----------|---------|
 | `docs/quickstart.md` | Step-by-step first-time setup guide |
 | `docs/production.md` | Production deployment, security, monitoring, operations |
-| `docs/port_decisions.md` | Rationale for every design choice |
-| `docs/component_mapping.md` | Complete TS-to-Python file/class/function mapping |
 | `docs/abstraction_layers.md` | Protocol design, FFI patterns, testing without runtime |
 
 ## Configuration Files
@@ -290,7 +288,7 @@ All documentation (besides `README.md`) lives in `docs/`. Never place standalone
 6. Add tests in `vectorize-mcp-tool/tests/test_server.py`.
 
 ### Change an algorithm parameter
-All constants are in the engine class `__init__` or as class attributes. The values must stay identical to the TS original unless intentionally diverging.
+All constants are in the engine class `__init__` or as class attributes. The values must stay identical to the standard configurations unless intentionally diverging.
 
 ### Swap a binding implementation
 Implement the protocol from `src/protocols.py` and inject in `src/entry.py`. Business logic is unaffected.

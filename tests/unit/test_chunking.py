@@ -1,4 +1,4 @@
-"""Tests for ChunkingEngine -- verifies identical behavior to TS original."""
+"""Tests for ChunkingEngine."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """IngestionEngine -- document and image ingestion with chunking and dedup.
 
-Mirrors the TS IngestionEngine class. Handles:
+Handles:
 - Text document ingestion with automatic chunking
 - Image ingestion via the ImageProcessor protocol (MULTIMODAL binding)
 - Document deletion with vector cleanup
@@ -23,10 +23,7 @@ if TYPE_CHECKING:
 
 
 class IngestionEngine:
-    """Ingest documents into Vectorize + D1.
-
-    Mirrors the TS IngestionEngine class exactly.
-    """
+    """Ingest documents into Vectorize + D1."""
 
     def __init__(self) -> None:
         self._chunker = ChunkingEngine()
@@ -41,10 +38,10 @@ class IngestionEngine:
     ) -> dict[str, Any]:
         """Ingest a text document with automatic chunking.
 
-        Steps (same as TS original):
+        Steps:
         1. De-duplicate: delete existing document if present
         2. Chunk the content
-        3. Generate embeddings for each chunk (parallel in TS, sequential here)
+        3. Generate embeddings for each chunk
         4. Store in D1 (document row + keyword index)
         5. Upsert vectors into Vectorize
 
@@ -119,7 +116,7 @@ class IngestionEngine:
     ) -> dict[str, Any]:
         """Ingest an image via the multimodal worker.
 
-        Steps (same as TS original):
+        Steps:
         1. Send image to MULTIMODAL service for description + vector
         2. Combine description with extracted text
         3. Store in D1 and Vectorize
@@ -148,7 +145,7 @@ class IngestionEngine:
             log.error("ingest_image.multimodal_failed", imgId=doc.id, error=result.error)
             raise RuntimeError(result.error or "Multimodal processing failed")
 
-        # Combine description with extracted text (same as TS original)
+        # Combine description with extracted text
         full_content = result.description
         if result.extracted_text:
             full_content = f"{result.description}\n\nExtracted Text: {result.extracted_text}"

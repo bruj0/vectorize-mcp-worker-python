@@ -278,10 +278,4 @@ See `docs/` for detailed documentation:
 
 - `docs/quickstart.md` -- Step-by-step first-time setup and endpoint testing
 - `docs/production.md` -- Production deployment, security, monitoring, operations
-- `docs/port_decisions.md` -- Technology choices and rationale
-- `docs/component_mapping.md` -- TypeScript to Python mapping
 - `docs/abstraction_layers.md` -- Protocol design and FFI patterns
-
-## Credits
-
-Original TypeScript implementation by [Daniel Nwaneri](https://github.com/dannwaneri/vectorize-mcp-worker).

@@ -7,7 +7,7 @@ from src.models import SearchResult
 
 
 class TestReciprocalRankFusion:
-    """Test RRF fusion matches the TS original's formula."""
+    """Test RRF fusion formula."""
 
     def test_vector_only(self) -> None:
         """With only vector results, RRF scores are 1/(k+rank+1)."""
